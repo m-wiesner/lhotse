@@ -57,6 +57,7 @@ def prepare_mixer6(
     transcript_dir: Optional[Pathlike],
     output_dir: Optional[Pathlike] = None,
     part: str = "intv",
+    channels: list = [1,3,4,5,6,7,8,9,10,11,12],
 ) -> Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]:
     """
     Returns the manifests which consist of the Recordings and Supervisions
@@ -64,6 +65,7 @@ def prepare_mixer6(
     :param transcript_dir: Pathlike, the path of the transcript dir (Mixer6Transcription).
     :param output_dir: Pathlike, the path where to write the manifests.
     :param part: str, "call" or "intv", specifies whether to prepare the telephone or interview data.
+    :param channels: list, the list of channel integer ids to include as sources. by default we exclude channels CH01 (0), CH03 (2), and CH13 (13).
     :return: a Dict whose key is the dataset part ('dev' and 'dev_test'), and the value is Dicts with the keys 'recordings' and 'supervisions'.
 
     NOTE on interview data: each recording in the interview data contains 14 channels. Channel 0 (Mic 01)
@@ -80,9 +82,6 @@ def prepare_mixer6(
     import textgrid
 
     corpus_dir = Path(corpus_dir)
-    corpus_dir = (
-        corpus_dir / "mx6_speech" if corpus_dir.stem != "mx6_speech" else corpus_dir
-    )
     transcript_dir = Path(transcript_dir)
     assert corpus_dir.is_dir(), f"No such directory: {corpus_dir}"
     assert part in ["call", "intv"]
@@ -156,44 +155,48 @@ def prepare_mixer6(
             tg = textgrid.TextGrid.fromFile(str(text_path))
             for i, tier in enumerate(tg.tiers):
                 for j, interval in enumerate(tier.intervals):
-                    if interval.mark != "":
+                    if interval.mark != "" and interval.mark != "DELETED":
                         start = interval.minTime
                         end = interval.maxTime
                         text = " ".join(interval.mark.split(" ")[1:])
-                        segment = SupervisionSegment(
-                            id=f"{intv}-{i}-{j}",
-                            recording_id=audio_id,
-                            start=start,
-                            duration=round(end - start, 4),
-                            channel=0,
-                            language="English",
-                            speaker=f"{spk_id}-{i}",
-                            text=text,
-                        )
-                        supervisions.append(segment)
+                        for chn in channels: 
+                            segment = SupervisionSegment(
+                                id=f"{intv}-{i}-{j}-{chn}",
+                                recording_id=audio_id,
+                                start=start,
+                                duration=round(end - start, 4),
+                                channel=chn,
+                                language="English",
+                                speaker=f"{spk_id}-{i}",
+                                text=text,
+                            )
+                            supervisions.append(segment)
 
             audios = list(corpus_dir.rglob(f"{audio_id}*.flac"))
             if len(audios) == 0:
                 logging.warning(f"No audio for {audio_id}")
                 continue
             audio_sf = sf.SoundFile(str(audios[0]))
+            sources = []
+            for chn in channels:
+                filename = f"{audio_id}_CH{chn+1:02d}.flac"
+                sources.append(
+                    AudioSource(
+                        type="file",
+                        channels=[chn],
+                        source=str(corpus_dir / "data" / "pcm_flac" / f"CH{chn:02d}" / filename)
+                    )
+                )
             recordings.append(
                 Recording(
                     id=audio_id,
-                    sources=[
-                        AudioSource(
-                            type="file",
-                            channels=[int(audio.stem[-2:]) - 1],
-                            source=str(audio),
-                        )
-                        for audio in sorted(audios)
-                    ],
+                    sources=sources,
                     sampling_rate=audio_sf.samplerate,
                     num_samples=audio_sf.frames,
                     duration=audio_sf.frames / audio_sf.samplerate,
                 )
             )
-
+   
     recording_set = RecordingSet.from_recordings(recordings)
     supervision_set = SupervisionSet.from_segments(supervisions)
 
