@@ -44,6 +44,13 @@ from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import Pathlike, Seconds, is_module_available
 
 
+ERROR_WORDS = [
+    'DELETD', 'DELETE', 'DELETED',
+    'DELETES', 'DELETEd', 'DELETeD',
+    'DELTED', 'ELETED', 'hDELETED'
+]
+
+
 class MixerSegmentAnnotation(NamedTuple):
     session: str
     speaker: str
@@ -54,6 +61,7 @@ class MixerSegmentAnnotation(NamedTuple):
 
 def prepare_mixer6(
     corpus_dir: Pathlike,
+    components: Pathlike, 
     transcript_dir: Optional[Pathlike],
     output_dir: Optional[Pathlike] = None,
     part: str = "intv",
@@ -83,6 +91,7 @@ def prepare_mixer6(
 
     corpus_dir = Path(corpus_dir)
     transcript_dir = Path(transcript_dir)
+    components = Path(components)
     assert corpus_dir.is_dir(), f"No such directory: {corpus_dir}"
     assert part in ["call", "intv"]
 
@@ -100,25 +109,35 @@ def prepare_mixer6(
             parts = line.strip().split(",")
             spk_to_gender[parts[0]] = parts[1]
 
+    # Read components (interview start and end time within audio file)
+    reco_to_offsets = {}
+    with open(components, "r") as f:
+        next(f)
+        for l in f:
+            parts = l.strip().split(",")
+            intv_beg, intv_end = float(parts[3]), float(parts[4])
+            call_beg, call_end = float(parts[7]), float(parts[8])
+            reco_to_offsets[parts[0]] = ((intv_beg, intv_end), (call_beg, call_end))
+
     recordings = []
     supervisions = []
 
     if part == "call":
-        text_paths = transcript_dir.rglob("*/call/*.textgrid")
+        text_paths = transcript_dir.rglob("*/call/*rid")
         for text_path in tqdm(text_paths, desc="Processing call textgrids"):
             session_id = "_".join(text_path.stem.split("_")[:-2])
             speaker_id = session_id.split("_")[-1]
             tg = textgrid.TextGrid.fromFile(str(text_path))
             for i in range(len(tg.tiers)):
                 for j in range(len(tg.tiers[i].intervals)):
-                    if tg.tiers[i].intervals[j].mark != "":
+                    if tg.tiers[i].intervals[j].mark != "" and not any(w in ERROR_WORDS for w in tg.tiers[i].intervals[j].mark.split()):
                         start = tg.tiers[i].intervals[j].minTime
                         end = tg.tiers[i].intervals[j].maxTime
                         text = " ".join(tg.tiers[i].intervals[j].mark.split(" ")[1:])
                         segment = SupervisionSegment(
                             id=f"{session_id}-{i}-{j}",
                             recording_id=session_id,
-                            start=start,
+                            start=start + reco_to_offsets[sessions_id][1][0],
                             duration=round(end - start, 4),
                             channel=0,
                             language="English",
@@ -143,7 +162,7 @@ def prepare_mixer6(
                 session_time = parts[1].split("_")[0]
                 intv_list[f"{spk_id}_{session_time}"] = parts[1]
 
-        text_paths = list(transcript_dir.rglob(f"intv/*.textgrid"))
+        text_paths = list(transcript_dir.rglob(f"intv/*rid"))
         for text_path in tqdm(text_paths, desc="Processing intv textgrids"):
             try:
                 spk_id, session_time, _, _ = text_path.stem.split("_")
@@ -155,7 +174,7 @@ def prepare_mixer6(
             tg = textgrid.TextGrid.fromFile(str(text_path))
             for i, tier in enumerate(tg.tiers):
                 for j, interval in enumerate(tier.intervals):
-                    if interval.mark != "" and interval.mark != "DELETED":
+                    if interval.mark != "" and not any(w in ERROR_WORDS for w in interval.mark.split()):
                         start = interval.minTime
                         end = interval.maxTime
                         text = " ".join(interval.mark.split(" ")[1:])
@@ -163,7 +182,7 @@ def prepare_mixer6(
                             segment = SupervisionSegment(
                                 id=f"{intv}-{i}-{j}-{chn}",
                                 recording_id=audio_id,
-                                start=start,
+                                start=start + reco_to_offsets[audio_id][0][0],
                                 duration=round(end - start, 4),
                                 channel=chn,
                                 language="English",
@@ -184,7 +203,7 @@ def prepare_mixer6(
                     AudioSource(
                         type="file",
                         channels=[chn],
-                        source=str(corpus_dir / "data" / "pcm_flac" / f"CH{chn:02d}" / filename)
+                        source=str(corpus_dir / "data" / "pcm_flac" / f"CH{chn+1:02d}" / filename)
                     )
                 )
             recordings.append(
