@@ -179,17 +179,20 @@ def prepare_mixer6(
                         end = interval.maxTime
                         text = " ".join(interval.mark.split(" ")[1:])
                         for chn in channels: 
-                            segment = SupervisionSegment(
-                                id=f"{intv}-{i}-{j}-{chn}",
-                                recording_id=audio_id,
-                                start=start + reco_to_offsets[audio_id][0][0],
-                                duration=round(end - start, 4),
-                                channel=chn,
-                                language="English",
-                                speaker=f"{spk_id}-{i}",
-                                text=text,
-                            )
-                            supervisions.append(segment)
+                            filename = f"{audio_id}_CH{chn+1:02d}.flac"
+                            file_source = corpus_dir / "data"/ "pcm_flac" / f"CH{chn+1:02d}" / filename
+                            if file_source.is_file(): 
+                                segment = SupervisionSegment(
+                                    id=f"{intv}-{i}-{j}-{chn}",
+                                    recording_id=audio_id,
+                                    start=start + reco_to_offsets[audio_id][0][0],
+                                    duration=round(end - start, 4),
+                                    channel=chn,
+                                    language="English",
+                                    speaker=f"{spk_id}-{i}",
+                                    text=text,
+                                )
+                                supervisions.append(segment)
 
             audios = list(corpus_dir.rglob(f"{audio_id}*.flac"))
             if len(audios) == 0:
@@ -199,22 +202,25 @@ def prepare_mixer6(
             sources = []
             for chn in channels:
                 filename = f"{audio_id}_CH{chn+1:02d}.flac"
-                sources.append(
-                    AudioSource(
-                        type="file",
-                        channels=[chn],
-                        source=str(corpus_dir / "data" / "pcm_flac" / f"CH{chn+1:02d}" / filename)
+                file_source = corpus_dir / "data" / "pcm_flac" / f"CH{chn+1:02d}" / filename
+                if file_source.is_file():
+                    sources.append(
+                        AudioSource(
+                            type="file",
+                            channels=[chn],
+                            source=str(corpus_dir / "data" / "pcm_flac" / f"CH{chn+1:02d}" / filename)
+                        )
+                    )
+            if len(sources) > 0:
+                recordings.append(
+                    Recording(
+                        id=audio_id,
+                        sources=sources,
+                        sampling_rate=audio_sf.samplerate,
+                        num_samples=audio_sf.frames,
+                        duration=audio_sf.frames / audio_sf.samplerate,
                     )
                 )
-            recordings.append(
-                Recording(
-                    id=audio_id,
-                    sources=sources,
-                    sampling_rate=audio_sf.samplerate,
-                    num_samples=audio_sf.frames,
-                    duration=audio_sf.frames / audio_sf.samplerate,
-                )
-            )
    
     recording_set = RecordingSet.from_recordings(recordings)
     supervision_set = SupervisionSet.from_segments(supervisions)
