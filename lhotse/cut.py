@@ -441,6 +441,8 @@ class Cut:
         cuts = []
         supervisions_index = self.index_supervisions(index_mixed_tracks=True)
         for segment in self.supervisions:
+            if segment.id in ("EN2001a-1", "EN2001a-488"):
+                pass
             if min_duration is None:
                 # Cut boundaries are equal to the supervision segment boundaries.
                 new_start, new_duration = segment.start, segment.duration
@@ -2490,6 +2492,7 @@ class MixedCut(Cut):
             )
         else:
             audio = mixer.unmixed_audio
+        print("SHAPE: {}".format(audio.shape))
         return audio
 
     def plot_tracks_features(self):

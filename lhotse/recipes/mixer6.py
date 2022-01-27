@@ -66,6 +66,7 @@ def prepare_mixer6(
     output_dir: Optional[Pathlike] = None,
     part: str = "intv",
     channels: list = [1,3,4,5,6,7,8,9,10,11,12],
+    mixed_cuts: bool = True,
 ) -> Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]:
     """
     Returns the manifests which consist of the Recordings and Supervisions
@@ -178,7 +179,8 @@ def prepare_mixer6(
                         start = interval.minTime
                         end = interval.maxTime
                         text = " ".join(interval.mark.split(" ")[1:])
-                        for chn in channels: 
+                        channel_iterator = channels if not mixed_cuts else [channels[0]]
+                        for chn in channel_iterator:
                             filename = f"{audio_id}_CH{chn+1:02d}.flac"
                             file_source = corpus_dir / "data"/ "pcm_flac" / f"CH{chn+1:02d}" / filename
                             if file_source.is_file(): 
