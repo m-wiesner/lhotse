@@ -18,7 +18,7 @@ class K2SpeechRecognitionDataset(torch.utils.data.Dataset):
     for which it loads features and automatically collates/batches them.
 
     To use it with a PyTorch DataLoader, set ``batch_size=None``
-    and provide a :class:`SingleCutSampler` sampler.
+    and provide a :class:`SimpleCutSampler` sampler.
 
     Each item in this dataset is a dict of:
 
@@ -110,7 +110,14 @@ class K2SpeechRecognitionDataset(torch.utils.data.Dataset):
 
         # Get a tensor with batched feature matrices, shape (B, T, F)
         # Collation performs auto-padding, if necessary.
-        inputs, _ = self.input_strategy(cuts)
+        input_tpl = self.input_strategy(cuts)
+        if len(input_tpl) == 3:
+            # An input strategy with fault tolerant audio reading mode.
+            # "cuts" may be a subset of the original "cuts" variable,
+            # that only has cuts for which we succesfully read the audio.
+            inputs, _, cuts = input_tpl
+        else:
+            inputs, _ = input_tpl
 
         # Get a dict of tensors that encode the positional information about supervisions
         # in the batch of feature matrices. The tensors are named "sequence_idx",

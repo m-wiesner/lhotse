@@ -23,7 +23,7 @@ data (as a part of this corpora) can be found in, for example, NIST RT04 amd RT0
 This recipe, however, to be self-contained factors out training (67.5 hours), development (2.2 hours 
 and evaluation (2.8 hours) sets in a way to minimise the speaker-overlap between different partitions, 
 and to avoid known issues with available recordings during evaluation. This recipe follows [2] where 
-dev and eval sets are making use of {Bmr021, Bns00} and {Bmr013, Bmr018, Bro021} meetings, respectively.
+dev and eval sets are making use of {Bmr021, Bns001} and {Bmr013, Bmr018, Bro021} meetings, respectively.
 
 [2] S Renals and P Swietojanski, Neural networks for distant speech recognition. 
     in Proc IEEE HSCMA 2014 pp. 172-176. DOI:10.1109/HSCMA.2014.6843274
@@ -127,9 +127,9 @@ PARTITIONS = {
 }
 
 MIC_TO_CHANNELS = {
-    "ihm": [1, 2, 3, 4, 5, 6, 8, 9], # we include 6 since it is used as back-off from some speakers for which no headset-mic exists
-    "sdm": [6],
-    "mdm": ["E", "F", 6, 7],
+    "ihm": ["1", "2", "3", "4", "5", "6", "8", "9"], # we include 6 since it is used as back-off from some speakers for which no headset-mic exists
+    "sdm": ["6"],
+    "mdm": ["E", "F", "6", "7"],
     "ihm-mix": [],
 }
 # fmt:on
@@ -442,8 +442,9 @@ def prepare_supervision_other(
         if len(source.channels) > 1:
             logging.warning(
                 f"More than 1 channels in recording {recording.id}. "
-                f"Creating supervision for channel 0 only."
+                f"Skipping this recording."
             )
+            continue
 
         for seg_idx, seg_info in enumerate(annotation):
             duration = seg_info.end_time - seg_info.start_time

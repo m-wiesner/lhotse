@@ -11,7 +11,7 @@ from io import BytesIO
 from itertools import islice
 from math import ceil, sqrt
 from pathlib import Path
-from subprocess import PIPE, run
+from subprocess import CalledProcessError, PIPE, run
 from typing import (
     Any,
     Callable,
@@ -32,10 +32,10 @@ from tqdm.auto import tqdm
 from lhotse.augmentation import (
     AudioTransform,
     Resample,
+    ReverbWithImpulseResponse,
     Speed,
     Tempo,
     Volume,
-    ReverbWithImpulseResponse,
 )
 from lhotse.caching import dynamic_lru_cache
 from lhotse.serialization import Serializable
@@ -196,7 +196,7 @@ class AudioSource:
             if (
                 available_duration < duration - LHOTSE_AUDIO_DURATION_MISMATCH_TOLERANCE
             ):  # set the allowance as 1ms to avoid float error
-                raise ValueError(
+                raise DurationMismatchError(
                     f"Requested more audio ({duration}s) than available ({available_duration}s)"
                 )
 
@@ -970,16 +970,34 @@ class AudioMixer:
     The SNR is relative to the energy of the signal used to initialize the ``AudioMixer``.
     """
 
-    def __init__(self, base_audio: np.ndarray, sampling_rate: int):
+    def __init__(
+        self,
+        base_audio: np.ndarray,
+        sampling_rate: int,
+        reference_energy: Optional[float] = None,
+    ):
         """
+        AudioMixer's constructor.
+
         :param base_audio: A numpy array with the audio samples for the base signal
             (all the other signals will be mixed to it).
         :param sampling_rate: Sampling rate of the audio.
+        :param reference_energy: Optionally pass a reference energy value to compute SNRs against.
+            This might be required when ``base_audio`` corresponds to zero-padding.
         """
         self.tracks = [base_audio]
         self.sampling_rate = sampling_rate
-        self.reference_energy = audio_energy(base_audio)
         self.dtype = self.tracks[0].dtype
+
+        # Keep a pre-computed energy value of the audio that we initialize the Mixer with;
+        # it is required to compute gain ratios that satisfy SNR during the mix.
+        if reference_energy is None:
+            self.reference_energy = audio_energy(base_audio)
+        else:
+            self.reference_energy = reference_energy
+        assert (
+            self.reference_energy > 0.0
+        ), f"To perform mix, energy must be non-zero and non-negative (got {self.reference_energy})"
 
     @property
     def unmixed_audio(self) -> np.ndarray:
@@ -1561,8 +1579,8 @@ def read_opus_ffmpeg(
                 f"Unknown channel description from ffmpeg: {channel_string}"
             )
     except ValueError as e:
-        raise ValueError(
-            f"{e}\nThe ffmpeg command for which the program failed is: '{cmd}'"
+        raise AudioLoadingError(
+            f"{e}\nThe ffmpeg command for which the program failed is: '{cmd}', error code: {proc.returncode}"
         )
     return audio, sampling_rate
 
@@ -1622,7 +1640,18 @@ def read_sph(
     cmd += f" {sph_path}"
 
     # Actual audio reading.
-    proc = BytesIO(run(cmd, shell=True, check=True, stdout=PIPE, stderr=PIPE).stdout)
+    try:
+        proc = BytesIO(
+            run(cmd, shell=True, check=True, stdout=PIPE, stderr=PIPE).stdout
+        )
+    except CalledProcessError as e:
+        if e.returncode == 127:
+            raise ValueError(
+                "It seems that 'sph2pipe' binary is not installed; "
+                "did you run 'lhotse install-sph2pipe'?"
+            )
+        else:
+            raise
 
     import soundfile as sf
 
@@ -1631,3 +1660,11 @@ def read_sph(
         audio = audio.reshape(1, -1) if sf_desc.channels == 1 else audio.T
 
     return audio, sampling_rate
+
+
+class AudioLoadingError(Exception):
+    pass
+
+
+class DurationMismatchError(Exception):
+    pass
