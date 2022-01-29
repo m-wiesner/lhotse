@@ -337,7 +337,7 @@ def collate_multi_channel_audio(cuts: CutSet) -> torch.Tensor:
     return audio
 
 
-def collate_multi_channel_mixed_audio(cuts: CutSet, ) -> torch.Tensor:
+def collate_multi_channel_mixed_audio(cuts: CutSet, channels=None) -> torch.Tensor:
     """
     Load audio samples for all the cuts and return them as a batch in a torch tensor.
     The cuts have to be of type ``MixedCut`` and their tracks will be interpreted as individual channels.
@@ -350,7 +350,7 @@ def collate_multi_channel_mixed_audio(cuts: CutSet, ) -> torch.Tensor:
     first_cut = next(iter(cuts))
     audio = torch.empty(len(cuts), first_cut.num_samples)
     for idx, cut in enumerate(cuts):
-        audio[idx] = torch.from_numpy(cut.load_audio())
+        audio[idx] = torch.from_numpy(cut.load_audio(channels=channels))
     return audio
 
 

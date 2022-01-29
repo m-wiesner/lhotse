@@ -28,6 +28,7 @@ from .librispeech import download_librispeech, prepare_librispeech
 from .libritts import download_libritts, prepare_libritts
 from .ljspeech import download_ljspeech, prepare_ljspeech
 from .mls import prepare_mls
+from .mixer6 import prepare_mixer6
 from .mobvoihotwords import download_mobvoihotwords, prepare_mobvoihotwords
 from .mtedx import download_mtedx, prepare_mtedx
 from .musan import download_musan, prepare_musan

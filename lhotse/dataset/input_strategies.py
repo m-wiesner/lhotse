@@ -285,28 +285,8 @@ class MultiChannelAudioSampleMix(AudioSamples):
         :return: a tensor with collated audio samples, and a tensor of ``num_samples`` of each cut before padding.
         """
         # check to see if cuts are MixedCutSet or MonoCutset
-        if hasattr(cuts[0], 'tracks'):
-            cuts = self._select_tracks(cuts)
-            inputs = collate_multi_channel_mixed_audio(cuts)
-            return inputs
-        else:
-            return collate_audio(
-                cuts,
-                executor=_get_executor(self.num_workers, executor_type=self._executor_type),
-            )[0] 
-
-    def _select_tracks(self, cuts: CutSet, channels):
-        '''
-            Only works on MixCuts.
-        '''
-        if len(channels) == 0 or channels is None:
-            channels = [[0] for cut in cuts]
-        
-        new_cuts = CutSet.from_cuts(cut for cut in cuts)
-        for i, cut in enumerate(new_cuts):
-            selected_tracks = [t for t in cut.tracks if t.cut.channel in channels[i]]
-            cut.tracks = selected_tracks
-        return cuts
+        inputs = collate_multi_channel_mixed_audio(cuts)
+        return inputs
 
 
 class OnTheFlyFeatures(BatchIO):

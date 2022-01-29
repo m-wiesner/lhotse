@@ -147,7 +147,6 @@ class AudioSource:
 
         # TODO: refactor when another source type is added
         source = self.source
-
         if self.type == "command":
             if offset != 0.0 or duration is not None:
                 # TODO(pzelasko): How should we support chunking for commands?
