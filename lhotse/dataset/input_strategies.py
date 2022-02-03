@@ -9,6 +9,7 @@ from lhotse import CutSet, FeatureExtractor
 from lhotse.cut import compute_supervisions_frame_mask
 from lhotse.dataset.collation import (
     collate_audio,
+    collate_multi_channel_mixed_audio,
     collate_features,
     collate_matrices,
     collate_vectors,
@@ -18,6 +19,7 @@ from lhotse.utils import (
     LOG_EPSILON,
     compute_num_frames,
     ifnone,
+    fastcopy,
     supervision_to_frames,
     supervision_to_samples,
 )
@@ -273,6 +275,18 @@ class AudioSamples(BatchIO):
                 for cut in cuts
             ]
         )
+
+
+class MultiChannelAudioSampleMix(AudioSamples):
+    def __call__(self, cuts: CutSet, channels=None) -> Tuple[torch.Tensor, torch.IntTensor]:
+        """
+        Reads the audio samples from recordings on disk/other storage.
+        The returned shape is ``(B, T) => (batch_size, num_samples)``.
+        :return: a tensor with collated audio samples, and a tensor of ``num_samples`` of each cut before padding.
+        """
+        # check to see if cuts are MixedCutSet or MonoCutset
+        inputs = collate_multi_channel_mixed_audio(cuts)
+        return inputs
 
 
 class OnTheFlyFeatures(BatchIO):
