@@ -285,7 +285,7 @@ class MultiChannelAudioSampleMix(AudioSamples):
         :return: a tensor with collated audio samples, and a tensor of ``num_samples`` of each cut before padding.
         """
         # check to see if cuts are MixedCutSet or MonoCutset
-        inputs = collate_multi_channel_mixed_audio(cuts)
+        inputs = collate_multi_channel_mixed_audio(cuts, channels)
         return inputs
 
 
