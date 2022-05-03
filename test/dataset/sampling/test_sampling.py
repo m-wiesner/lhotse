@@ -368,11 +368,17 @@ def test_concat_cuts_with_duration_factor():
 
 def test_bucketing_sampler_single_cuts():
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=1000)
-    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler)
-    sampled_cuts = []
-    for batch in sampler:
-        sampled_cuts.extend(batch)
-    assert set(cut_set.ids) == set(c.id for c in sampled_cuts)
+    for method in ("equal_duration", "equal_len"):
+        sampler = BucketingSampler(
+            cut_set,
+            sampler_type=SimpleCutSampler,
+            bucket_method=method,
+            num_buckets=10
+        )
+        sampled_cuts = []
+        for batch in sampler:
+            sampled_cuts.extend(batch)
+        assert set(cut_set.ids) == set(c.id for c in sampled_cuts)
 
 
 def test_bucketing_sampler_single_cuts_no_proportional_sampling():
@@ -426,12 +432,16 @@ def test_bucketing_sampler_single_cuts_equal_duration():
 
     # Ensure that each consecutive bucket has less cuts than the previous one
     prev_len = float("inf")
+    prev_min = 0
+    prev_max = 0
     bucket_cum_durs = []
     for (bucket,) in sampler.buckets:
         bucket_cum_durs.append(sum(c.duration for c in bucket))
-        curr_len = len(bucket)
-        assert curr_len < prev_len
-        prev_len = curr_len
+        bucket_min = min(c.duration for c in bucket)
+        bucket_max = max(c.duration for c in bucket)
+        assert bucket_min >= prev_min and bucket_max >= prev_max
+        prev_min = bucket_min
+        prev_max = bucket_max
 
     # Assert that all bucket cumulative durations are within 1/10th of the mean
     mean_bucket_dur = mean(bucket_cum_durs)  # ~ 1300s

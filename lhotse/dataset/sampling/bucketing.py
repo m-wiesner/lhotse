@@ -411,25 +411,41 @@ def _create_buckets_equal_duration_single(
 
     See also: :meth:`.create_buckets_from_duration_percentiles`.
     """
-    total_duration = np.sum(c.duration for c in cuts)
+    assert num_buckets < len(cuts) 
+    total_duration = sum(c.duration for c in cuts)
     bucket_duration = total_duration / num_buckets
-    iter_cuts = iter(cuts)
-    buckets = []
-    for bucket_idx in range(num_buckets):
-        bucket = []
-        current_duration = 0
-        try:
-            while current_duration < bucket_duration:
-                bucket.append(next(iter_cuts))
-                current_duration += bucket[-1].duration
-            # Every odd bucket, take the cut that exceeded the bucket's duration
-            # and put it in the front of the iterable, so that it goes to the
-            # next bucket instead. It will ensure that the last bucket is not too
-            # thin (otherwise all the previous buckets are a little too large).
-            if bucket_idx % 2:
-                last_cut = bucket.pop()
-                iter_cuts = chain([last_cut], iter_cuts)
-        except StopIteration:
-            assert bucket_idx == num_buckets - 1
-        buckets.append(CutSet.from_cuts(bucket))
-    return buckets
+    order = list(range(0, len(cuts), 2)) + list(range(len(cuts)-(1 + len(cuts)%2), 0, -2))  
+    order2idx = {o_idx:i for i, o_idx in enumerate(order)} 
+    durations = [c.duration for c in cuts]
+    ordered_cut_durations = sorted(zip(order, durations), key=lambda x: x[0])  
+    last_order = 0
+    first_bucket = 0
+    last_bucket = num_buckets - 1
+    buckets_dict = {i: 0 for i in range(num_buckets)}
+    buckets_cut_dict = {i: [] for i in range(num_buckets)}
+    middle_bucket = None
+    idx_to_bucket_id = {}
+    for i, (order_idx, duration) in enumerate(ordered_cut_durations, 1):
+        if middle_bucket is None and first_bucket == last_bucket:
+            middle_bucket = first_bucket
+        if i % 2:
+            if buckets_dict[first_bucket] + duration > bucket_duration:
+                if middle_bucket is not None and first_bucket == middle_bucket:
+                    first_bucket = min(middle_bucket - 1, num_buckets - 1)
+                else:
+                    first_bucket = min(first_bucket + 1, num_buckets - 1)
+            buckets_dict[first_bucket] += duration
+            idx_to_bucket_id[order2idx[order_idx]] = first_bucket
+        else:
+            if buckets_dict[last_bucket] + duration > bucket_duration:
+                if middle_bucket is not None and last_bucket == middle_bucket:
+                    last_bucket = max(middle_bucket + 1, 0)
+                else:
+                    last_bucket = max(last_bucket - 1, 0)
+            buckets_dict[last_bucket] += duration
+            idx_to_bucket_id[order2idx[order_idx]] = last_bucket
+    
+    for cut_idx, cut in enumerate(cuts):
+        buckets_cut_dict[idx_to_bucket_id[cut_idx]].append(cut)
+    buckets = [CutSet.from_cuts(buckets_cut_dict[i]) for i in range(num_buckets)]
+    return buckets 

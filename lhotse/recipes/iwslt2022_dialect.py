@@ -55,6 +55,72 @@ arabic_filter = re.compile(r'[OUM]+/*|\u061F|\?|\!|\.')
 english_filter = re.compile(r'\(|\)|\#|\+|\=|\?|\!|\;|\.|\,|\"|\:')
 
 
+def prepare_iwslt2022_dialect_eval(
+    corpus_dir: Pathlike,
+    segments: Pathlike,
+    output_dir: Optional[Pathlike] = None,
+) -> Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]:
+    """
+    Prepares manifests for the eval splits.
+    """
+    manifests = {}
+    corpus_dir = Path(corpus_dir)
+    audio_dir = corpus_dir / "data" / "audio"
+    recordings = {} 
+    supervisions = []
+    for p in audio_dir.glob("*.sph"):
+        audio_sf = sf.SoundFile(str(p))
+        filename = p.stem 
+        if filename not in recordings:
+            recordings[filename] = Recording(
+                id=filename,
+                sources=[
+                    AudioSource(
+                        type="file",
+                        channels=[0],
+                        source=str(p),
+                    ),
+                ],
+                sampling_rate=audio_sf.samplerate,
+                num_samples=audio_sf.frames,
+                duration=audio_sf.frames / audio_sf.samplerate,
+            )
+
+    with open(segments) as f:
+        for l in f:
+            uttid, recoid, start, end = l.strip().split()
+            start, end = float(start), float(end)
+            sid = uttid.split('_')[2] 
+            supervisions.append(
+                SupervisionSegment(
+                    id=f'{uttid}',
+                    recording_id=recoid,
+                    start=start,
+                    duration=round(end - start, ndigits=8),
+                    channel=0,
+                    text='',
+                    language="transcript",
+                    speaker=sid,
+                )
+            )
+    supervisions = SupervisionSet.from_segments(supervisions)
+    recordings = RecordingSet.from_recordings(recordings.values())
+    recordings, supervisions = remove_missing_recordings_and_supervisions(
+        recordings, supervisions,
+    )
+    supervisions = trim_supervisions_to_recordings(recordings, supervisions)
+    validate_recordings_and_supervisions(recordings, supervisions)
+    manifests['eval'] = {'recordings': recordings, 'supervisions': supervisions}
+
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        recordings.to_file(output_dir / f"recordings_eval.json")
+        supervisions.to_file(output_dir / f"supervisions_eval.json")
+
+    return manifests
+
+
 def prepare_iwslt2022_dialect(
     corpus_dir: Pathlike,
     splits: Pathlike,
