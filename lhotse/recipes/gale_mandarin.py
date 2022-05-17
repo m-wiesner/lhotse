@@ -33,7 +33,7 @@ from lhotse.utils import Pathlike, check_and_rglob, is_module_available
 
 # Dev recording ids will be downloaded from the Kaldi repo
 KALDI_BASE_URL = (
-    "https://github.com/kaldi-asr/kaldi/blob/master/egs/gale_mandarin/s5/local/test."
+    "https://raw.githubusercontent.com/kaldi-asr/kaldi/master/egs/gale_mandarin/s5/local/test."
 )
 TEST_FILE_URLS = [
     KALDI_BASE_URL + name
