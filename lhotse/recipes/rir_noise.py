@@ -70,7 +70,7 @@ def download_rir_noise(
     target_dir: Pathlike = ".",
     url: Optional[str] = RIR_NOISE_ZIP_URL,
     force_download: Optional[bool] = False,
-) -> None:
+) -> Path:
     """
     Download and untar the RIR Noise corpus.
 
@@ -88,11 +88,12 @@ def download_rir_noise(
     else:
         urlretrieve_progress(url, zip_path, desc=f"Downloading {zip_name}")
         logging.info(f"Downloaded {zip_name}.")
-    zip_dir = target_dir / "rirs_noises"
+    zip_dir = target_dir / "RIRS_NOISES"
     if not zip_dir.exists():
         logging.info(f"Unzipping {zip_name}.")
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(target_dir)
+    return zip_dir
 
 
 def prepare_rir_noise(
@@ -156,6 +157,8 @@ def prepare_rir_noise(
         output_dir.mkdir(parents=True, exist_ok=True)
         for part in manifests:
             for key, manifest in manifests[part].items():
-                manifest.to_file(output_dir / f"{key}_{part}.json")
+                manifest.to_file(
+                    output_dir / f"{part.replace('_','-')}_{key}_all.jsonl.gz"
+                )
 
     return manifests

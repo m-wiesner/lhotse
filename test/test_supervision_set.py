@@ -131,6 +131,20 @@ def test_create_supervision_segment_with_all_metadata():
     )
 
 
+def test_supervision_set_from_rttm(tmpdir):
+    rttm_str = """SPEAKER reco1 1 130.430000 2.350 <NA> <NA> juliet <NA> <NA>
+                  SPEAKER reco1 1 157.610000 3.060 <NA> <NA> tbc <NA> <NA>
+                  SPEAKER reco2 1 130.490000 0.450 <NA> <NA> chek <NA> <NA>"""
+    tmpdir = Path(tmpdir)
+    rttm_dir = tmpdir / "rttm"
+    rttm_dir.mkdir()
+    rttm_file = rttm_dir / "example.rttm"
+    rttm_file.write_text(rttm_str)
+
+    supervision_set = SupervisionSet.from_rttm(rttm_file)
+    assert len(supervision_set) == 3
+
+
 def test_supervision_set_with_alignment_from_ctm(
     external_supervision_set, external_alignment
 ):
@@ -164,7 +178,7 @@ def test_add_supervision_sets():
     supervision_set_1 = DummyManifest(SupervisionSet, begin_id=0, end_id=5)
     supervision_set_2 = DummyManifest(SupervisionSet, begin_id=5, end_id=10)
     combined = supervision_set_1 + supervision_set_2
-    assert combined == expected
+    assert list(combined) == list(expected)
 
 
 @pytest.fixture

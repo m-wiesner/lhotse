@@ -1,7 +1,7 @@
 """
 About the Aishell corpus
 Aishell is an open-source Chinese Mandarin speech corpus published by Beijing Shell Shell Technology Co.,Ltd.
-publicly availble on https://www.openslr.org/33
+publicly available on https://www.openslr.org/33
 """
 
 import logging
@@ -22,21 +22,22 @@ def download_aishell(
     target_dir: Pathlike = ".",
     force_download: Optional[bool] = False,
     base_url: Optional[str] = "http://www.openslr.org/resources",
-) -> None:
+) -> Path:
     """
     Downdload and untar the dataset
     :param target_dir: Pathlike, the path of the dir to storage the dataset.
     :param force_download: Bool, if True, download the tars no matter if the tars exist.
     :param base_url: str, the url of the OpenSLR resources.
+    :return: the path to downloaded and extracted directory with data.
     """
     url = f"{base_url}/33"
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+    corpus_dir = target_dir / "aishell"
     dataset_tar_name = "data_aishell.tgz"
     resources_tar_name = "resource_aishell.tgz"
     for tar_name in [dataset_tar_name, resources_tar_name]:
         tar_path = target_dir / tar_name
-        corpus_dir = target_dir / "aishell"
         extracted_dir = corpus_dir / tar_name[:-4]
         completed_detector = extracted_dir / ".completed"
         if completed_detector.is_file():
@@ -55,6 +56,8 @@ def download_aishell(
                 with tarfile.open(wav_dir / sub_tar_name) as tar:
                     tar.extractall(path=wav_dir)
         completed_detector.touch()
+
+    return corpus_dir
 
 
 def prepare_aishell(
@@ -113,8 +116,10 @@ def prepare_aishell(
         validate_recordings_and_supervisions(recording_set, supervision_set)
 
         if output_dir is not None:
-            supervision_set.to_json(output_dir / f"supervisions_{part}.json")
-            recording_set.to_json(output_dir / f"recordings_{part}.json")
+            supervision_set.to_file(
+                output_dir / f"aishell_supervisions_{part}.jsonl.gz"
+            )
+            recording_set.to_file(output_dir / f"aishell_recordings_{part}.jsonl.gz")
 
         manifests[part] = {"recordings": recording_set, "supervisions": supervision_set}
 

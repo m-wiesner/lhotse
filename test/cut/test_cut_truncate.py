@@ -1,3 +1,4 @@
+import random
 from math import isclose
 
 import pytest
@@ -6,7 +7,7 @@ from lhotse import RecordingSet
 from lhotse.cut import CutSet, MixTrack, MixedCut, MonoCut
 from lhotse.features import Features
 from lhotse.supervision import SupervisionSegment, SupervisionSet
-from lhotse.testing.dummies import dummy_cut, dummy_recording
+from lhotse.testing.dummies import DummyManifest, dummy_cut, dummy_recording
 
 
 @pytest.fixture
@@ -105,6 +106,26 @@ def test_truncate_above_duration_has_no_effect(overlapping_supervisions_cut):
         duration=1.0, preserve_id=True
     )
     assert truncated_cut == overlapping_supervisions_cut
+
+
+def test_cut_truncate_offset_with_nonzero_start():
+    cut = dummy_cut(0, start=1.0, duration=4.0)
+    left = cut.truncate(duration=2.0)
+    assert left.start == pytest.approx(1.0)
+    assert left.end == pytest.approx(3.0)
+
+    right = cut.truncate(offset=2.0)
+    assert right.start == pytest.approx(3.0)
+    assert right.end == pytest.approx(5.0)
+
+
+def test_cut_split():
+    cut = dummy_cut(0, start=1.0, duration=4.0)
+    left, right = cut.split(2.0)
+    assert left.start == pytest.approx(1.0)
+    assert left.end == pytest.approx(3.0)
+    assert right.start == pytest.approx(3.0)
+    assert right.end == pytest.approx(5.0)
 
 
 @pytest.fixture
@@ -229,9 +250,45 @@ def test_truncate_cut_set_offset_random(cut_set):
     assert len(set(cut.end for cut in truncated_cut_set)) > 1
 
 
+@pytest.mark.parametrize("use_rng", [False, True])
+def test_truncate_cut_set_offset_random_rng(use_rng):
+    cuts1 = DummyManifest(CutSet, begin_id=0, end_id=30)
+    cuts2 = DummyManifest(CutSet, begin_id=0, end_id=30)
+
+    rng = None
+    state = None
+    if use_rng:
+        rng = random.Random(10)
+        state = rng.getstate()
+
+    trunc1 = cuts1.truncate(
+        max_duration=0.3, offset_type="random", rng=rng, preserve_id=True
+    )
+
+    if use_rng:
+        rng.setstate(state)
+
+    trunc2 = cuts2.truncate(
+        max_duration=0.3, offset_type="random", rng=rng, preserve_id=True
+    )
+
+    # IDs were not changed or changed identically.
+    assert list(trunc1.ids) == list(trunc2.ids)
+
+    # Offsets are identical with the use of RNG + state set/reset.
+    offsets1 = [c.start for c in trunc1]
+    offsets2 = [c.start for c in trunc2]
+    if use_rng:
+        assert offsets1 == offsets2
+    else:
+        assert offsets1 != offsets2
+
+
 @pytest.mark.parametrize("num_jobs", [1, 2])
 def test_cut_set_windows_even_split_keep_supervisions(cut_set, num_jobs):
-    windows_cut_set = cut_set.cut_into_windows(duration=5.0, num_jobs=num_jobs)
+    windows_cut_set = cut_set.cut_into_windows(
+        duration=5.0, num_jobs=num_jobs
+    ).to_eager()
     assert len(windows_cut_set) == 4
     assert all(cut.duration == 5.0 for cut in windows_cut_set)
 

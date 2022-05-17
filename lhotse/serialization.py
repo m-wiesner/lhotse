@@ -1,4 +1,3 @@
-import gzip
 import itertools
 import json
 import warnings
@@ -8,6 +7,7 @@ from typing import Any, Dict, Generator, Iterable, Optional, Type, Union
 import yaml
 
 from lhotse.utils import Pathlike, is_module_available
+from lhotse.workarounds import gzip_open_robust
 
 # TODO: figure out how to use some sort of typing stubs
 #  so that linters/static checkers don't complain
@@ -25,7 +25,7 @@ def open_best(path: Pathlike, mode: str = "r"):
         if compressed and "t" not in mode and "b" not in mode:
             # Opening as bytes not requested explicitly, use "t" to tell gzip to handle unicode.
             mode = mode + "t"
-        open_fn = gzip.open if compressed else open
+        open_fn = gzip_open_robust if compressed else open
 
     return open_fn(path, mode)
 
@@ -61,7 +61,7 @@ class YamlMixin:
 def save_to_json(data: Any, path: Pathlike) -> None:
     """Save the data to a JSON file. Will use GZip to compress it if the path ends with a ``.gz`` extension."""
     with open_best(path, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def load_json(path: Pathlike) -> Union[dict, list]:
@@ -84,7 +84,7 @@ def save_to_jsonl(data: Iterable[Dict[str, Any]], path: Pathlike) -> None:
     """Save the data to a JSON file. Will use GZip to compress it if the path ends with a ``.gz`` extension."""
     with open_best(path, "w") as f:
         for item in data:
-            print(json.dumps(item), file=f)
+            print(json.dumps(item, ensure_ascii=False), file=f)
 
 
 def load_jsonl(path: Pathlike) -> Generator[Dict[str, Any], None, None]:
@@ -92,7 +92,7 @@ def load_jsonl(path: Pathlike) -> Generator[Dict[str, Any], None, None]:
     with open_best(path) as f:
         for line in f:
             # The temporary variable helps fail fast
-            ret = json.loads(line)
+            ret = decode_json_line(line)
             yield ret
 
 
@@ -114,7 +114,7 @@ class SequentialJsonlWriter:
     This writer can be useful for continuing to write files that were previously
     stopped -- it will open the existing file and scan it for item IDs to skip
     writing them later. It can also be queried for existing IDs so that the user
-    code may skip preparing the corresponding manifets.
+    code may skip preparing the corresponding manifests.
 
     Example:
 
@@ -145,7 +145,7 @@ class SequentialJsonlWriter:
             with open_best(self.path) as f:
                 self.ignore_ids = {
                     data["id"]
-                    for data in (json.loads(line) for line in f)
+                    for data in (decode_json_line(line) for line in f)
                     if "id" in data
                 }
 
@@ -183,11 +183,11 @@ class SequentialJsonlWriter:
                 return
         except AttributeError:
             pass
-        print(json.dumps(manifest.to_dict()), file=self.file)
+        print(json.dumps(manifest.to_dict(), ensure_ascii=False), file=self.file)
         if flush:
             self.file.flush()
 
-    def open_manifest(self) -> Manifest:
+    def open_manifest(self) -> Optional[Manifest]:
         """
         Opens the manifest that this writer has been writing to.
         The manifest is opened in a lazy mode.
@@ -277,7 +277,7 @@ class JsonlMixin:
         This writer can be useful for continuing to write files that were previously
         stopped -- it will open the existing file and scan it for item IDs to skip
         writing them later. It can also be queried for existing IDs so that the user
-        code may skip preparing the corresponding manifets.
+        code may skip preparing the corresponding manifests.
 
         Example:
 
@@ -299,6 +299,41 @@ class JsonlMixin:
 
 
 class LazyMixin:
+    def from_items(self, data: Iterable):
+        """
+        Function to be implemented by every sub-class of this mixin.
+        It's expected to create a sub-class instance out of an iterable of items
+        that are held by the sub-class (e.g., ``CutSet.from_items(iterable_of_cuts)``).
+        """
+        raise NotImplemented
+
+    @property
+    def data(self) -> Union[Dict[str, Any], Iterable[Any]]:
+        """
+        Property to be implemented by every sub-class of this mixin.
+        It can either be a regular Python dict holding manifests for eager mode,
+        or a special iterator class for lazy mode.
+        """
+        raise NotImplemented
+
+    def to_eager(self):
+        """
+        Evaluates all lazy operations on this manifest, if any, and returns a copy
+        that keeps all items in memory.
+        If the manifest was "eager" already, this is a no-op and won't copy anything.
+        """
+        if not self.is_lazy:
+            return self
+        cls = type(self)
+        return cls.from_items(self)
+
+    @property
+    def is_lazy(self) -> bool:
+        """
+        Indicates whether this manifest was opened in lazy (read-on-the-fly) mode or not.
+        """
+        return not isinstance(self.data, (dict, list, tuple))
+
     @classmethod
     def from_jsonl_lazy(cls, path: Pathlike) -> Manifest:
         """
@@ -308,6 +343,8 @@ class LazyMixin:
         .. warning:: Opening the manifest in this way might cause some methods that
             rely on random access to fail.
         """
+        from lhotse.lazy import LazyJsonlIterator
+
         return cls(LazyJsonlIterator(path))
 
 
@@ -355,6 +392,8 @@ def load_manifest(path: Pathlike, manifest_cls: Optional[Type] = None) -> Manife
     for manifest_type in candidates:
         try:
             data_set = manifest_type.from_dicts(raw_data)
+            if len(data_set) == 0:
+                raise RuntimeError()
             break
         except Exception:
             pass
@@ -435,98 +474,6 @@ class Serializable(JsonMixin, JsonlMixin, LazyMixin, YamlMixin):
         store_manifest(self, path)
 
 
-class LazyJsonlIterator:
-    """
-    LazyJsonlIterator provides the ability to read Lhotse objects from a
-    JSONL file on-the-fly, without reading its full contents into memory.
-
-    This class is designed to be a partial "drop-in" replacement for ordinary dicts
-    to support lazy loading of RecordingSet, SupervisionSet and CutSet.
-    Since it does not support random access reads, some methods of these classes
-    might not work properly.
-    """
-
-    def __init__(self, path: Pathlike) -> None:
-        self.path = path
-        assert extension_contains(".jsonl", self.path)
-
-    def _reset(self) -> None:
-        self._file = open_best(self.path)
-
-    def __getstate__(self):
-        """
-        Store the state for pickling -- we'll only store the path, and re-initialize
-        this iterator when unpickled. This is necessary to transfer this object across processes
-        for PyTorch's DataLoader workers.
-        """
-        state = {"path": self.path}
-        return state
-
-    def __setstate__(self, state: Dict):
-        """Restore the state when unpickled -- open the jsonl file again."""
-        self.__dict__.update(state)
-
-    def __iter__(self):
-        self._reset()
-        return self
-
-    def __next__(self):
-        line = next(self._file)
-        data = json.loads(line)
-        item = deserialize_item(data)
-        return item
-
-    def values(self):
-        yield from self
-
-    def keys(self):
-        return (item.id for item in self)
-
-    def items(self):
-        return ((item.id, item) for item in self)
-
-    def __len__(self) -> int:
-        return count_newlines_fast(self.path)
-
-    def __add__(self, other) -> "LazyIteratorChain":
-        return LazyIteratorChain(self, other)
-
-
-class LazyIteratorChain:
-    """
-    A thin wrapper over multiple iterators that enables to combine lazy manifests
-    in Lhotse. It iterates all underlying iterables sequentially.
-    """
-
-    def __init__(self, *iterators: Iterable) -> None:
-        self.iterators = []
-        for it in iterators:
-            # Auto-flatten LazyIteratorChain instances if any are passed
-            if isinstance(it, LazyIteratorChain):
-                for sub_it in it.iterators:
-                    self.iterators.append(sub_it)
-            else:
-                self.iterators.append(it)
-
-    def __iter__(self):
-        return (item for it in self.iterators for item in it)
-
-    def values(self):
-        yield from self
-
-    def keys(self):
-        return (item.id for item in self)
-
-    def items(self):
-        return ((item.id, item) for item in self)
-
-    def __len__(self) -> int:
-        return sum(len(it) for it in self.iterators)
-
-    def __add__(self, other) -> "LazyIteratorChain":
-        return LazyIteratorChain(self, other)
-
-
 def deserialize_item(data: dict) -> Any:
     # Figures out what type of manifest is being decoded with some heuristics
     # and returns a Lhotse manifest object rather than a raw dict.
@@ -587,20 +534,9 @@ def deserialize_custom_field(data: Optional[dict]) -> Optional[dict]:
     return data
 
 
-def count_newlines_fast(path: Pathlike):
-    """
-    Counts newlines in a file using buffered chunk reads.
-    The fastest possible option in Python according to:
-    https://stackoverflow.com/a/68385697/5285891
-    (This is a slightly modified variant of that answer.)
-    """
+if is_module_available("orjson"):
+    import orjson
 
-    def _make_gen(reader):
-        b = reader(2 ** 16)
-        while b:
-            yield b
-            b = reader(2 ** 16)
-
-    with open_best(path, "rb") as f:
-        count = sum(buf.count(b"\n") for buf in _make_gen(f.read))
-    return count
+    decode_json_line = orjson.loads
+else:
+    decode_json_line = json.loads

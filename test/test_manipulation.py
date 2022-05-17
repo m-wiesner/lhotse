@@ -1,4 +1,5 @@
 import random
+from tempfile import TemporaryDirectory
 
 import pytest
 from pytest import mark
@@ -96,6 +97,23 @@ def test_cannot_split_to_more_chunks_than_items(manifest_type):
 
 
 @mark.parametrize("manifest_type", [RecordingSet, SupervisionSet, FeatureSet, CutSet])
+def test_split_lazy_even(manifest_type):
+    with TemporaryDirectory() as d:
+        manifest = DummyManifest(manifest_type, begin_id=0, end_id=100)
+        manifest_subsets = manifest.split_lazy(output_dir=d, chunk_size=49)
+        assert len(manifest_subsets) == 3
+        assert list(manifest_subsets[0]) == list(
+            DummyManifest(manifest_type, begin_id=0, end_id=49)
+        )
+        assert list(manifest_subsets[1]) == list(
+            DummyManifest(manifest_type, begin_id=49, end_id=98)
+        )
+        assert list(manifest_subsets[2]) == list(
+            DummyManifest(manifest_type, begin_id=98, end_id=100)
+        )
+
+
+@mark.parametrize("manifest_type", [RecordingSet, SupervisionSet, FeatureSet, CutSet])
 def test_combine(manifest_type):
     expected = DummyManifest(manifest_type, begin_id=0, end_id=200)
     combined = combine(
@@ -103,7 +121,7 @@ def test_combine(manifest_type):
         DummyManifest(manifest_type, begin_id=68, end_id=136),
         DummyManifest(manifest_type, begin_id=136, end_id=200),
     )
-    assert combined == expected
+    assert combined.to_eager() == expected
     combined_iterable = combine(
         [
             DummyManifest(manifest_type, begin_id=0, end_id=68),
@@ -111,20 +129,7 @@ def test_combine(manifest_type):
             DummyManifest(manifest_type, begin_id=136, end_id=200),
         ]
     )
-    assert combined_iterable == expected
-
-
-@mark.parametrize("manifest_type", [RecordingSet, SupervisionSet, FeatureSet, CutSet])
-def test_combine_lazy(manifest_type):
-    expected = DummyManifest(manifest_type, begin_id=0, end_id=200)
-    with as_lazy(DummyManifest(manifest_type, begin_id=0, end_id=68)) as part1, as_lazy(
-        DummyManifest(manifest_type, begin_id=68, end_id=136)
-    ) as part2, as_lazy(
-        DummyManifest(manifest_type, begin_id=136, end_id=200)
-    ) as part3:
-        combined = combine(part1, part2, part3)
-        # Equivalent under iteration
-        assert list(combined) == list(expected)
+    assert combined_iterable.to_eager() == expected
 
 
 @mark.parametrize("manifest_type", [RecordingSet, SupervisionSet, FeatureSet, CutSet])

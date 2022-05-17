@@ -81,14 +81,15 @@ SpeakerMetadata = namedtuple(
 def download_voxceleb1(
     target_dir: Pathlike = ".",
     force_download: Optional[bool] = False,
-) -> None:
+) -> Path:
     """
     Download and unzip the VoxCeleb1 data.
 
+    .. note:: A "connection refused" error may occur if you are downloading without a password.
+
     :param target_dir: Pathlike, the path of the dir to store the dataset.
     :param force_download: bool, if True, download the archive even if it already exists.
-
-    NOTE: A "connection refused" error may occur if you are downloading without a password.
+    :return: the path to downloaded and extracted directory with data.
     """
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -115,18 +116,21 @@ def download_voxceleb1(
     with zipfile.ZipFile(target_dir / "vox1_test_wav.zip") as zf:
         zf.extractall(target_dir)
 
+    return target_dir
+
 
 def download_voxceleb2(
     target_dir: Pathlike = ".",
     force_download: Optional[bool] = False,
-) -> None:
+) -> Path:
     """
     Download and unzip the VoxCeleb2 data.
 
+    .. note:: A "connection refused" error may occur if you are downloading without a password.
+
     :param target_dir: Pathlike, the path of the dir to store the dataset.
     :param force_download: bool, if True, download the archive even if it already exists.
-
-    NOTE: A "connection refused" error may occur if you are downloading without a password.
+    :return: the path to downloaded and extracted directory with data.
     """
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -152,6 +156,8 @@ def download_voxceleb2(
     logging.info(f"Unzipping test...")
     with zipfile.ZipFile(target_dir / "vox2_test_aac.zip") as zf:
         zf.extractall(target_dir)
+
+    return target_dir
 
 
 def prepare_voxceleb(
@@ -229,17 +235,17 @@ def prepare_voxceleb(
         supervisions = manifests[split]["supervisions"]
         validate_recordings_and_supervisions(recordings, supervisions)
         if output_dir is not None:
-            recordings.to_file(output_dir / f"recordings_voxceleb_{split}.jsonl.gz")
-            supervisions.to_file(output_dir / f"supervisions_voxceleb_{split}.jsonl.gz")
+            recordings.to_file(output_dir / f"voxceleb_recordings_{split}.jsonl.gz")
+            supervisions.to_file(output_dir / f"voxceleb_supervisions_{split}.jsonl.gz")
 
     # Write the trials cut sets to the output directory
     if output_dir is not None:
         if "pos_trials" in manifests:
             for i, cuts in enumerate(manifests["pos_trials"]):
-                cuts.to_file(output_dir / f"pos_trials_voxceleb_utt{i+1}.jsonl.gz")
+                cuts.to_file(output_dir / f"voxceleb_pos-trials_utt{i+1}.jsonl.gz")
         if "neg_trials" in manifests:
             for i, cuts in enumerate(manifests["neg_trials"]):
-                cuts.to_file(output_dir / f"neg_trials_voxceleb_utt{i+1}.jsonl.gz")
+                cuts.to_file(output_dir / f"voxceleb_neg-trials_utt{i+1}.jsonl.gz")
 
     return manifests
 

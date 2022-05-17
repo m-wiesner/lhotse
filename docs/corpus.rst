@@ -45,16 +45,22 @@ a CLI tool that create the manifests given a corpus directory.
     - Function
   * - ADEPT
     - :func:`lhotse.recipes.prepare_adept`
+  * - Aidatatang_200zh
+    - :func:`lhotse.recipes.prepare_aidatatang_200zh`
   * - Aishell
     - :func:`lhotse.recipes.prepare_aishell`
   * - AISHELL-4
     - :func:`lhotse.recipes.prepare_aishell4`
+  * - AliMeeting
+    - :func:`lhotse.recipes.prepare_alimeeting`
   * - AMI
     - :func:`lhotse.recipes.prepare_ami`
   * - ASpIRE
     - :func:`lhotse.recipes.prepare_aspire`
   * - BABEL
     - :func:`lhotse.recipes.prepare_single_babel_language`
+  * - BVCC / VoiceMOS Challenge
+    - :func:`lhotse.recipes.bvcc`
   * - CallHome Egyptian
     - :func:`lhotse.recipes.prepare_callhome_egyptian`
   * - CallHome English
@@ -115,6 +121,8 @@ a CLI tool that create the manifests given a corpus directory.
     - :func:`lhotse.recipes.prepare_peoples_speech`
   * - RIRs and Noises Corpus (OpenSLR 28)
     - :func:`lhotse.recipes.prepare_rir_noise`
+  * - SPGISpeech
+    - :func:`lhotse.recipes.prepare_spgispeech`
   * - Switchboard
     - :func:`lhotse.recipes.prepare_switchboard`
   * - TED-LIUM v3
@@ -129,6 +137,8 @@ a CLI tool that create the manifests given a corpus directory.
     - :func:`lhotse.recipes.prepare_wenet_speech`
   * - YesNo
     - :func:`lhotse.recipes.prepare_yesno`
+  * - Eval2000
+    - :func:`lhotse.recipes.prepare_eval2000`
 
 
 Adding new corpora
@@ -156,6 +166,14 @@ Adding new corpora
     **Pre-defined train/dev/test splits.** When a corpus defines standard split (e.g. train/dev/test),
     we return a dict with the following structure:
     ``{'train': {'recordings': <RecordingSet>, 'supervisions': <SupervisionSet>}, 'dev': ...}``
+
+.. hint::
+    **Manifest naming convention.** The default naming convention is ``<corpus-name>_<manifest-type>_<split>.jsonl.gz``,
+    i.e., we save the manifests in a compressed JSONL file. Here, ``<manifest-type>`` can be ``recordings``, 
+    ``supervisions``, etc., and ``<split>`` can be ``train``, ``dev``, ``test``, etc. In case the corpus
+    has no such split defined, we can use ``all`` as default. Other information, e.g., mic type, language, etc. may 
+    be included in the ``<corpus-name>``. Some examples are: ``cmu-indic_recordings_all.jsonl.gz``,
+    ``ami-ihm_supervisions_dev.jsonl.gz``, ``mtedx-english_recordings_train.jsonl.gz``.
 
 .. hint::
     **Isolated utterance corpora.** Some corpora (like LibriSpeech) come with pre-segmented recordings.

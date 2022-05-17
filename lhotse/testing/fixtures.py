@@ -1,8 +1,10 @@
+import os
 import random
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Dict, List
 
 import numpy as np
+import torch
 
 from lhotse import (
     AudioSource,
@@ -22,11 +24,12 @@ from lhotse.utils import Seconds, uuid4
 
 
 def random_cut_set(n_cuts=100) -> CutSet:
+    sr = 16000
     return CutSet.from_cuts(
         MonoCut(
             id=uuid4(),
-            start=round(random.uniform(0, 5), ndigits=8),
-            duration=round(random.uniform(3, 10), ndigits=8),
+            start=random.randint(0, 5 * sr) / sr,
+            duration=random.randint(3 * sr, 10 * sr) / sr,
             channel=0,
             recording=Recording(
                 id=uuid4(),
@@ -56,14 +59,21 @@ class RandomCutTestCase:
             d.cleanup()
         self.dirs = []
 
-    def with_recording(self, sampling_rate: int, num_samples: int) -> Recording:
-        import soundfile
+    def with_recording(
+        self, sampling_rate: int, num_samples: int, use_zeros: bool = False
+    ) -> Recording:
+        import torchaudio  # torchaudio does not have issues on M1 macs unlike soundfile
 
         f = NamedTemporaryFile("wb", suffix=".wav")
         self.files.append(f)
         duration = num_samples / sampling_rate
-        samples = np.random.rand(num_samples)
-        soundfile.write(f.name, samples, samplerate=sampling_rate)
+        if use_zeros:
+            samples = torch.zeros((1, num_samples))
+        else:
+            samples = torch.rand((1, num_samples))
+        torchaudio.save(f.name, samples, sample_rate=sampling_rate)
+        f.flush()
+        os.fsync(f)
         return Recording(
             id=str(uuid4()),
             sources=[AudioSource(type="file", channels=[0], source=f.name)],
@@ -81,6 +91,7 @@ class RandomCutTestCase:
         alignment: bool = False,
         custom_field: bool = False,
         frame_shift: Seconds = 0.01,
+        use_zeroes: bool = False,
     ) -> MonoCut:
         duration = num_samples / sampling_rate
         cut = MonoCut(
@@ -89,7 +100,9 @@ class RandomCutTestCase:
             duration=duration,
             channel=0,
             recording=self.with_recording(
-                sampling_rate=sampling_rate, num_samples=num_samples
+                sampling_rate=sampling_rate,
+                num_samples=num_samples,
+                use_zeros=use_zeroes,
             ),
         )
         if features:

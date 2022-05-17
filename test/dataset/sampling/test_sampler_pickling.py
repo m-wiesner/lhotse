@@ -8,9 +8,11 @@ from lhotse.dataset import (
     BucketingSampler,
     CutPairsSampler,
     DynamicBucketingSampler,
+    RoundRobinSampler,
     SimpleCutSampler,
     ZipSampler,
 )
+from lhotse.dataset.sampling.dynamic import DynamicCutSampler
 from lhotse.testing.dummies import DummyManifest
 
 CUTS = DummyManifest(CutSet, begin_id=0, end_id=100)
@@ -19,6 +21,10 @@ CUTS_MOD = CUTS.modify_ids(lambda cid: cid + "_alt")
 SAMPLERS_TO_TEST = [
     SimpleCutSampler(CUTS, max_duration=10.0, shuffle=True, drop_last=True),
     CutPairsSampler(CUTS, CUTS, max_source_duration=10.0, shuffle=True, drop_last=True),
+    RoundRobinSampler(
+        SimpleCutSampler(CUTS, max_duration=10.0, shuffle=True, drop_last=True),
+        SimpleCutSampler(CUTS_MOD, max_duration=10.0, shuffle=True, drop_last=True),
+    ),
     ZipSampler(
         SimpleCutSampler(CUTS, max_duration=10.0, shuffle=True, drop_last=True),
         SimpleCutSampler(CUTS_MOD, max_duration=10.0, shuffle=True, drop_last=True),
@@ -49,6 +55,8 @@ SAMPLERS_TO_TEST = [
     DynamicBucketingSampler(
         CUTS, CUTS_MOD, max_duration=10.0, shuffle=True, drop_last=True, num_buckets=2
     ),
+    DynamicCutSampler(CUTS, max_duration=10.0, shuffle=True, drop_last=True),
+    DynamicCutSampler(CUTS, CUTS, max_duration=10.0, shuffle=True, drop_last=True),
 ]
 
 
