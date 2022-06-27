@@ -105,7 +105,7 @@ def prepare_aishell(
                 start=0.0,
                 duration=recording.duration,
                 channel=0,
-                language="Chinese",
+                language="Mandarin",
                 speaker=speaker,
                 text=text.strip(),
             )

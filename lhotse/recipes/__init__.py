@@ -1,4 +1,6 @@
 from .adept import download_adept, prepare_adept
+from .aidatatang_200zh import download_aidatatang_200zh, prepare_aidatatang_200zh
+from .aidatatang_cs import prepare_aidatatang_cs
 from .aishell import download_aishell, prepare_aishell
 from .aishell4 import download_aishell4, prepare_aishell4
 from .ali_meeting import download_ali_meeting, prepare_ali_meeting
@@ -38,6 +40,7 @@ from .musan import download_musan, prepare_musan
 from .nsc import prepare_nsc
 from .peoples_speech import prepare_peoples_speech
 from .rir_noise import download_rir_noise, prepare_rir_noise
+from .seame import prepare_seame
 from .spgispeech import download_spgispeech, prepare_spgispeech
 from .switchboard import prepare_switchboard
 from .tedlium import download_tedlium, prepare_tedlium
