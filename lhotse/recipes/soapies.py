@@ -108,7 +108,6 @@ def prepare_soapies(
     corpus_dir: Pathlike,
     output_dir: Optional[Pathlike] = Path("./"),
     languages: Optional[Union[str, Sequence[str]]] = "all",
-    num_jobs: int = 1,
 ) -> Dict[str, Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]]:
 
     # Resolve corpus_dir type
@@ -136,7 +135,6 @@ def prepare_soapies(
                 corpus_dir_lang,
                 output_dir_lang,
                 language=lang,
-                num_jobs=num_jobs,
             )
 
     return dict(manifests)
