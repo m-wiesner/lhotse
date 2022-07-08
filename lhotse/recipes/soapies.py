@@ -1,5 +1,8 @@
 """
-Xhosa speech corpora.
+South African corpus of Multilingual speech. (From Soap Operas)
+
+Described in https://aclanthology.org/L18-1451.pdf
+
 """
 import logging
 import re
