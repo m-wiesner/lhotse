@@ -43,6 +43,7 @@ from .rir_noise import download_rir_noise, prepare_rir_noise
 from .seame import prepare_seame
 from .spgispeech import download_spgispeech, prepare_spgispeech
 from .switchboard import prepare_switchboard
+from .soapies import download_soapies, prepare_soapies
 from .tedlium import download_tedlium, prepare_tedlium
 from .timit import download_timit, prepare_timit
 from .vctk import download_vctk, prepare_vctk
