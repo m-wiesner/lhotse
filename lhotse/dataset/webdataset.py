@@ -54,7 +54,7 @@ import random
 from functools import partial
 from typing import Callable, Dict, Generator, Iterable, List, Optional, Sequence, Union
 
-from tqdm.auto import tqdm
+import tqdm
 
 from lhotse import CutSet, MonoCut
 from lhotse.lazy import LazyIteratorChain
@@ -150,13 +150,14 @@ def export_to_webdataset(
 
     total = 0
     ok = 0
-    with writer:
-        for cut in tqdm(
-            cuts, desc="Creating WebDataset tarball(s)", disable=not verbose
-        ):
+    with writer, tqdm.auto.tqdm(
+        desc="Creating WebDataset tarball(s)", disable=not verbose
+    ) as pbar:
+        for cut in cuts:
             total += 1
             success = writer.write(cut)
             ok += int(success)
+            pbar.update()
 
     num_shards_written = writer.num_shards_written
 
@@ -403,15 +404,10 @@ def mini_webdataset(
     if not is_module_available("webdataset"):
         raise ImportError("Please 'pip install webdataset' first.")
 
-    from webdataset import (
-        DataPipeline,
-        split_by_node as split_by_node_,
-        split_by_worker as split_by_worker_,
-        reraise_exception,
-        warn_and_continue,
-        SimpleShardList,
-        tarfile_to_samples,
-    )
+    from webdataset import DataPipeline, SimpleShardList, reraise_exception
+    from webdataset import split_by_node as split_by_node_
+    from webdataset import split_by_worker as split_by_worker_
+    from webdataset import tarfile_to_samples, warn_and_continue
 
     wds = DataPipeline(SimpleShardList(urls=urls))
     if split_by_node:
@@ -495,6 +491,9 @@ class ShardWriter:
         self.tarstream = None
         self.shard = start_shard
         self.pattern = pattern
+        assert (
+            self.pattern != "-"
+        ), "Dash '-' is not an allowed pattern for ShardWriter."
         self.total = 0
         self.count = 0
         self.size = 0

@@ -16,7 +16,9 @@ from .cmu_indic import download_cmu_indic, prepare_cmu_indic
 from .cmu_kids import prepare_cmu_kids
 from .commonvoice import prepare_commonvoice
 from .cslu_kids import prepare_cslu_kids
+from .daily_talk import download_daily_talk, prepare_daily_talk
 from .dihard3 import prepare_dihard3
+from .eval2000 import prepare_eval2000
 from .fisher_english import prepare_fisher_english
 from .fisher_spanish import prepare_fisher_spanish
 from .gale_arabic import prepare_gale_arabic
@@ -32,6 +34,8 @@ from .librimix import download_librimix, prepare_librimix
 from .librispeech import download_librispeech, prepare_librispeech
 from .libritts import download_libritts, prepare_libritts
 from .ljspeech import download_ljspeech, prepare_ljspeech
+from .magicdata import download_magicdata, prepare_magicdata
+from .mgb2 import prepare_mgb2
 from .mls import prepare_mls
 from .mixer6 import prepare_mixer6
 from .mobvoihotwords import download_mobvoihotwords, prepare_mobvoihotwords
@@ -42,12 +46,13 @@ from .peoples_speech import prepare_peoples_speech
 from .rir_noise import download_rir_noise, prepare_rir_noise
 from .seame import prepare_seame
 from .spgispeech import download_spgispeech, prepare_spgispeech
+from .stcmds import download_stcmds, prepare_stcmds
 from .switchboard import prepare_switchboard
 from .soapies import download_soapies, prepare_soapies
 from .tedlium import download_tedlium, prepare_tedlium
+from .thchs_30 import download_thchs_30, prepare_thchs_30
 from .timit import download_timit, prepare_timit
 from .vctk import download_vctk, prepare_vctk
 from .voxceleb import download_voxceleb1, download_voxceleb2, prepare_voxceleb
 from .wenet_speech import prepare_wenet_speech
 from .yesno import download_yesno, prepare_yesno
-from .eval2000 import prepare_eval2000

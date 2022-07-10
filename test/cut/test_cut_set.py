@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 
 from lhotse import (
-    FeatureSet,
+    Fbank,
+    FbankConfig,
     Features,
+    FeatureSet,
     Recording,
     RecordingSet,
     SupervisionSegment,
@@ -15,7 +17,7 @@ from lhotse import (
     load_manifest,
 )
 from lhotse.audio import AudioSource
-from lhotse.cut import CutSet, MixTrack, MixedCut, MonoCut
+from lhotse.cut import CutSet, MixedCut, MixTrack, MonoCut
 from lhotse.serialization import load_jsonl
 from lhotse.testing.dummies import (
     DummyManifest,
@@ -147,7 +149,7 @@ def test_trim_to_supervisions_simple_cuts(keep_overlapping, num_jobs):
     )
     cuts = cut_set.trim_to_supervisions(
         keep_overlapping=keep_overlapping, num_jobs=num_jobs
-    )
+    ).to_eager()
     assert len(cuts) == 4
 
     # Note: expected results diverge here depending on the value of keep_overlapping flag
@@ -263,7 +265,9 @@ def mixed_overlapping_cut_set():
 def test_trim_to_supervisions_mixed_cuts_keep_overlapping_false(
     mixed_overlapping_cut_set,
 ):
-    cuts = mixed_overlapping_cut_set.trim_to_supervisions(keep_overlapping=False)
+    cuts = mixed_overlapping_cut_set.trim_to_supervisions(
+        keep_overlapping=False
+    ).to_eager()
     assert len(cuts) == 3
     # After "trimming", in some instances the MixedCut "decayed" into simple, unmixed cuts, as they did not overlap;
     # In other instances, it's still a MixedCut
@@ -300,7 +304,9 @@ def test_trim_to_supervisions_mixed_cuts_keep_overlapping_false(
 def test_trim_to_supervisions_mixed_cuts_keep_overlapping_true(
     mixed_overlapping_cut_set,
 ):
-    cuts = mixed_overlapping_cut_set.trim_to_supervisions(keep_overlapping=True)
+    cuts = mixed_overlapping_cut_set.trim_to_supervisions(
+        keep_overlapping=True
+    ).to_eager()
     assert len(cuts) == 3
     # After "trimming", in some instances the MixedCut "decayed" into simple, unmixed cuts, as they did not overlap;
     # In other instances, it's still a MixedCut
@@ -465,6 +471,24 @@ def test_compute_cmvn_stats():
     assert stats["norm_stds"].shape == (cut_set[0].num_features,)
     assert (stats["norm_means"] == read_stats["norm_means"]).all()
     assert (stats["norm_stds"] == read_stats["norm_stds"]).all()
+
+
+@pytest.mark.parametrize("max_cuts", [None, 1])
+def test_compute_cmvn_stats_on_the_fly(max_cuts):
+    cut_set = CutSet.from_json("test/fixtures/libri/cuts.json")
+    fbank = Fbank()
+    with TemporaryDirectory() as d:
+        cut_set = cut_set.compute_and_store_features(fbank, d)
+        # precomputed
+        precomputed_stats = cut_set.compute_global_feature_stats(max_cuts=max_cuts)
+        # on the fly
+        on_the_fly_stats = cut_set.compute_global_feature_stats(
+            max_cuts=max_cuts, extractor=fbank
+        )
+    for key in ("norm_means", "norm_stds"):
+        np.testing.assert_almost_equal(
+            precomputed_stats[key], on_the_fly_stats[key], decimal=3
+        )
 
 
 def test_modify_ids(cut_set_with_mixed_cut):

@@ -1,7 +1,9 @@
 import itertools
 import logging
+import pickle
 import random
 import warnings
+from collections import Counter, defaultdict
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial, reduce
@@ -44,19 +46,19 @@ from lhotse.augmentation import AugmentFn
 from lhotse.features import (
     FeatureExtractor,
     FeatureMixer,
-    FeatureSet,
     Features,
+    FeatureSet,
     create_default_feature_extractor,
 )
-from lhotse.features.base import compute_global_stats
+from lhotse.features.base import StatsAccumulator, compute_global_stats
 from lhotse.features.io import FeaturesWriter, LilcomChunkyWriter, LilcomFilesWriter
 from lhotse.lazy import AlgorithmMixin
 from lhotse.serialization import Serializable
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import (
     DEFAULT_PADDING_VALUE,
-    Decibels,
     LOG_EPSILON,
+    Decibels,
     NonPositiveEnergyError,
     Pathlike,
     Seconds,
@@ -380,6 +382,7 @@ class Cut:
         Display the alignment on top of a spectrogram. Requires matplotlib to be installed.
         """
         import matplotlib.pyplot as plt
+
         from lhotse import Fbank
         from lhotse.utils import compute_num_frames
 
@@ -434,7 +437,7 @@ class Cut:
         keep_overlapping: bool = True,
         min_duration: Optional[Seconds] = None,
         context_direction: Literal["center", "left", "right", "random"] = "center",
-    ) -> List["Cut"]:
+    ) -> "CutSet":
         """
         Splits the current :class:`.Cut` into as many cuts as there are supervisions (:class:`.SupervisionSegment`).
         These cuts have identical start times and durations as the supervisions.
@@ -502,14 +505,14 @@ class Cut:
                 # Ensure that there is exactly one supervision per cut.
                 trimmed = trimmed.filter_supervisions(lambda s: s.id == segment.id)
             cuts.append(trimmed)
-        return cuts
+        return CutSet.from_cuts(cuts)
 
     def cut_into_windows(
         self,
         duration: Seconds,
         hop: Optional[Seconds] = None,
         keep_excessive_supervisions: bool = True,
-    ) -> List["Cut"]:
+    ) -> "CutSet":
         """
         Return a list of shorter cuts, made by traversing this cut in windows of
         ``duration`` seconds by ``hop`` seconds.
@@ -535,7 +538,7 @@ class Cut:
                     keep_excessive_supervisions=keep_excessive_supervisions,
                 )
             )
-        return new_cuts
+        return CutSet.from_cuts(new_cuts)
 
     def index_supervisions(
         self, index_mixed_tracks: bool = False, keep_ids: Optional[Set[str]] = None
@@ -1102,6 +1105,65 @@ class MonoCut(Cut):
         )
         return cut
 
+    def attach_tensor(
+        self,
+        name: str,
+        data: Union[np.ndarray, torch.Tensor],
+        frame_shift: Optional[Seconds] = None,
+        temporal_dim: Optional[int] = None,
+        compressed: bool = False,
+    ) -> "MonoCut":
+        """
+        Attach a tensor to this MonoCut, described with an :class:`~lhotse.array.Array` manifest.
+        The attached data is stored in-memory for later use, and can be accessed by
+        calling ``cut.load_<name>()`` or :meth:`cut.load_custom`.
+
+        This is useful if you want actions such as truncate/pad to propagate to the tensor, e.g.::
+
+            >>> cut = MonoCut(id="c1", start=2, duration=8, ...)
+            >>> cut = cut.attach_tensor(
+            ...     "alignment",
+            ...     torch.tensor([0, 0, 0, ...]),
+            ...     frame_shift=0.1,
+            ...     temporal_dim=0,
+            ... )
+            >>> half_alignment = cut.truncate(duration=4.0).load_alignment()
+
+        .. note:: This object can't be stored in JSON/JSONL manifests anymore.
+
+        :param name: attribute under which the data can be found.
+        :param data: PyTorch tensor or numpy array.
+        :param frame_shift: Optional float, when the array has a temporal dimension
+            it indicates how much time has passed between the starts of consecutive frames
+            (expressed in seconds).
+        :param temporal_dim: Optional int, when the array has a temporal dimension,
+            it indicates which dim to interpret as temporal.
+        :param compressed: When True, we will apply lilcom compression to the array.
+            Only applicable to arrays of floats.
+        :return:
+        """
+        from lhotse.features.io import MemoryLilcomWriter, MemoryRawWriter
+
+        cpy = fastcopy(
+            self, custom=self.custom.copy() if self.custom is not None else {}
+        )
+        writer = MemoryLilcomWriter() if compressed else MemoryRawWriter()
+        if isinstance(data, torch.Tensor):
+            data = data.numpy()
+        with writer:
+            setattr(
+                cpy,
+                name,
+                writer.store_array(
+                    key=cpy.id,
+                    value=data,
+                    frame_shift=frame_shift,
+                    temporal_dim=temporal_dim,
+                    start=cpy.start,
+                ),
+            )
+        return cpy
+
     def drop_features(self) -> "MonoCut":
         """Return a copy of the current :class:`.MonoCut`, detached from ``features``."""
         assert (
@@ -1158,7 +1220,7 @@ class MonoCut(Cut):
             old_sup = self.supervisions[0]
             if isclose(old_sup.start, 0) and isclose(old_sup.duration, self.duration):
                 return self
-            if old_sup.start < 0 or old_sup.end > self.end and not shrink_ok:
+            if (old_sup.start < 0 or old_sup.end > self.end) and not shrink_ok:
                 raise ValueError(
                     f"Cannot shrink supervision (start={old_sup.start}, end={old_sup.end}) to cut "
                     f"(start=0, duration={self.duration}) because the argument `shrink_ok` is `False`. "
@@ -3009,7 +3071,7 @@ class MixedCut(Cut):
         audio = self.load_audio(mixed=False)
         fig, axes = plt.subplots(len(self.tracks), sharex=False, sharey=True)
         for idx, (track, ax) in enumerate(zip(self.tracks, axes)):
-            samples = audio[idx, :]
+            samples = audio[idx].squeeze(0)
             ax.plot(np.linspace(0, self.duration, len(samples)), samples)
             for supervision in track.cut.supervisions:
                 supervision = supervision.trim(track.cut.duration)
@@ -3699,18 +3761,36 @@ class CutSet(Serializable, AlgorithmMixin):
             max     5415.0
             dtype: float64
         """
-        durations = np.array([c.duration for c in self])
-        speech_durations = np.array(
-            [s.duration for c in self for s in c.trimmed_supervisions]
-        )
-        total_sum = durations.sum()
-        speech_sum = speech_durations.sum()
+
+        def convert(hours: float) -> Tuple[int, int, int]:
+            hours, seconds = divmod(hours, 3600)
+            minutes, seconds = divmod(seconds, 60)
+            return int(hours), int(minutes), ceil(seconds)
+
+        cntrs = defaultdict(int)
+        cut_custom, sup_custom = Counter(), Counter()
+        durations, speech_durations = [], []
+        for c in self:
+            durations.append(c.duration)
+            if hasattr(c, "custom"):
+                for key in ifnone(c.custom, ()):
+                    cut_custom[key] += 1
+            cntrs["recordings"] += int(c.has_recording)
+            cntrs["features"] += int(c.has_features)
+            for s in c.trimmed_supervisions:
+                speech_durations.append(s.duration)
+                cntrs["supervisions"] += 1
+                for key in ifnone(s.custom, ()):
+                    sup_custom[key] += 1
         print("Cuts count:", len(durations))
-        print(f"Total duration (hours): {total_sum / 3600:.1f}")
+        total_sum = np.array(durations).sum()
+        hh, mm, ss = convert(total_sum)
+        print(f"Total duration (hh:mm:ss): {hh:02d}:{mm:02d}:{ss:02d}")
+        hh, mm, ss = convert(total_sum)
+        speech_sum = np.array(speech_durations).sum()
         print(
-            f"Speech duration (hours): {speech_sum / 3600:.1f} ({speech_sum / total_sum:.1%})"
+            f"Speech duration (hh:mm:ss): {hh:02d}:{mm:02d}:{ss:02d} ({speech_sum / total_sum:.1%})"
         )
-        print("***")
         print("Duration statistics (seconds):")
         print(f"mean\t{np.mean(durations):.1f}")
         print(f"std\t{np.std(durations):.1f}")
@@ -3722,6 +3802,16 @@ class CutSet(Serializable, AlgorithmMixin):
         print(f"99.5%\t{np.percentile(durations, 99.5):.1f}")
         print(f"99.9%\t{np.percentile(durations, 99.9):.1f}")
         print(f"max\t{np.max(durations):.1f}")
+        for key, val in cntrs.items():
+            print(f"{key.title()} available: {val}")
+        if cut_custom:
+            print("CUT custom fields:")
+            for key, val in cut_custom.most_common():
+                print(f"- {key} (in {val} cuts)")
+        if sup_custom:
+            print("SUPERVISION custom fields:")
+            for key, val in sup_custom.most_common():
+                print(f"- {key} (in {val} cuts)")
 
     def split(
         self, num_splits: int, shuffle: bool = False, drop_last: bool = False
@@ -3852,7 +3942,7 @@ class CutSet(Serializable, AlgorithmMixin):
         :param predicate: A callable that accepts `SupervisionSegment` and returns bool
         :return: a CutSet with filtered supervisions
         """
-        return CutSet.from_cuts(cut.filter_supervisions(predicate) for cut in self)
+        return self.map(lambda cut: cut.filter_supervisions(predicate))
 
     def merge_supervisions(
         self, custom_merge_fn: Optional[Callable[[str, Iterable[Any]], Any]] = None
@@ -3874,8 +3964,8 @@ class CutSet(Serializable, AlgorithmMixin):
             It will be called roughly like:
             ``custom_merge_fn(custom_key, [s.custom[custom_key] for s in sups])``
         """
-        return CutSet.from_cuts(
-            c.merge_supervisions(custom_merge_fn=custom_merge_fn) for c in self
+        return self.map(
+            lambda cut: cut.merge_supervisions(custom_merge_fn=custom_merge_fn)
         )
 
     def trim_to_supervisions(
@@ -3925,16 +4015,21 @@ class CutSet(Serializable, AlgorithmMixin):
         :param num_jobs: Number of parallel workers to process the cuts.
         :return: a ``CutSet``.
         """
+
         if num_jobs == 1:
-            return CutSet.from_cuts(
-                # chain.from_iterable is a flatten operation: Iterable[Iterable[T]] -> Iterable[T]
-                chain.from_iterable(
-                    cut.trim_to_supervisions(
-                        keep_overlapping=keep_overlapping,
-                        min_duration=min_duration,
-                        context_direction=context_direction,
+            from lhotse.lazy import LazyFlattener, LazyMapper
+
+            return CutSet(
+                LazyFlattener(
+                    LazyMapper(
+                        self,
+                        partial(
+                            _trim_to_supervisions_single,
+                            keep_overlapping=keep_overlapping,
+                            min_duration=min_duration,
+                            context_direction=context_direction,
+                        ),
                     )
-                    for cut in self
                 )
             )
 
@@ -3943,7 +4038,7 @@ class CutSet(Serializable, AlgorithmMixin):
         result = split_parallelize_combine(
             num_jobs,
             self,
-            CutSet.trim_to_supervisions,
+            _trim_to_supervisions_single,
             keep_overlapping=keep_overlapping,
             min_duration=min_duration,
             context_direction=context_direction,
@@ -4094,8 +4189,8 @@ class CutSet(Serializable, AlgorithmMixin):
             else:
                 duration = max(cut.duration for cut in self)
 
-        return CutSet.from_cuts(
-            cut.pad(
+        return self.map(
+            lambda cut: cut.pad(
                 duration=duration,
                 num_frames=num_frames,
                 num_samples=num_samples,
@@ -4104,7 +4199,6 @@ class CutSet(Serializable, AlgorithmMixin):
                 preserve_id=preserve_id,
                 pad_value_dict=pad_value_dict,
             )
-            for cut in self
         )
 
     def truncate(
@@ -4173,11 +4267,10 @@ class CutSet(Serializable, AlgorithmMixin):
         :param preserve_id: bool. Should the extended cut keep the same ID or get a new, random one.
         :return: a new CutSet instance.
         """
-        return CutSet.from_cuts(
-            cut.extend_by(
+        return self.map(
+            lambda cut: cut.extend_by(
                 duration=duration, direction=direction, preserve_id=preserve_id
             )
-            for cut in self
         )
 
     def cut_into_windows(
@@ -4210,7 +4303,8 @@ class CutSet(Serializable, AlgorithmMixin):
                 LazyFlattener(
                     LazyMapper(
                         self,
-                        lambda cut: cut.cut_into_windows(
+                        partial(
+                            _cut_into_windows_single,
                             duration=duration,
                             hop=hop,
                             keep_excessive_supervisions=keep_excessive_supervisions,
@@ -4224,14 +4318,42 @@ class CutSet(Serializable, AlgorithmMixin):
         result = split_parallelize_combine(
             num_jobs,
             self,
-            partial(
-                _cut_into_windows_single,
-                duration=duration,
-                hop=hop,
-                keep_excessive_supervisions=keep_excessive_supervisions,
-            ),
+            _cut_into_windows_single,
+            duration=duration,
+            hop=hop,
+            keep_excessive_supervisions=keep_excessive_supervisions,
         )
         return result
+
+    def load_audio(
+        self,
+        collate: bool = False,
+        limit: int = 1024,
+    ) -> Union[List[np.ndarray], Tuple[np.ndarray, np.ndarray]]:
+        """
+        Reads the audio of all cuts in this :class:`.CutSet` into memory.
+        Useful when this object represents a mini-batch.
+
+        :param collate: Should we collate the read audio into a single array.
+            Shorter cuts will be padded. False by default.
+        :param limit: Maximum number of read audio examples.
+            By default it's 1024 which covers most frequently encountered mini-batch sizes.
+            If you are working with larger batch sizes, increase this limit.
+        :return: A list of numpy arrays, or a single array with batch size as the first dim.
+        """
+        assert not self.is_lazy, "Cannot load audio of cuts in a lazy CutSet."
+        assert len(self) < limit, (
+            f"Cannot load audio of a CutSet with len={len(self)} because limit was set to {limit}. "
+            f"This is a safe-guard against accidental CPU memory blow-ups. "
+            f"If you know what you're doing, set the limit higher."
+        )
+        if collate:
+            from lhotse.dataset.collation import collate_audio
+
+            audios, audio_lens = collate_audio(self)
+            return audios.numpy(), audio_lens.numpy()
+
+        return [cut.load_audio() for cut in self]
 
     def sample(self, n_cuts: int = 1) -> Union[Cut, "CutSet"]:
         """
@@ -4333,17 +4455,14 @@ class CutSet(Serializable, AlgorithmMixin):
         :return: a modified copy of the ``CutSet``.
         """
         rir_recordings = list(rir_recordings)
-        return CutSet.from_cuts(
-            [
-                cut.reverb_rir(
-                    rir_recording=random.choice(rir_recordings),
-                    normalize_output=normalize_output,
-                    early_only=early_only,
-                    affix_id=affix_id,
-                    rir_channels=rir_channels,
-                )
-                for cut in self
-            ]
+        return self.map(
+            lambda cut: cut.reverb_rir(
+                rir_recording=random.choice(rir_recordings),
+                normalize_output=normalize_output,
+                early_only=early_only,
+                affix_id=affix_id,
+                rir_channels=rir_channels,
+            )
         )
 
     def mix(
@@ -4389,6 +4508,11 @@ class CutSet(Serializable, AlgorithmMixin):
             ), f"SNR range must be a list or tuple with exactly two values (got: {snr})"
         else:
             assert isinstance(snr, (type(None), int, float))
+        assert not cuts.is_lazy, (
+            "Mixing of two CutSets does not support a lazy mixed-in CutSet ('cuts' argument), "
+            "as it would be extremely inefficient. "
+            "You can use 'cuts.to_eager()' on the function argument to fix this."
+        )
         mixed_cuts = []
         for cut in self:
             # Check whether we're going to mix something into the current cut
@@ -4437,19 +4561,19 @@ class CutSet(Serializable, AlgorithmMixin):
         """
         Return a new :class:`.CutSet`, where each :class:`.Cut` is copied and detached from its extracted features.
         """
-        return CutSet.from_cuts(c.drop_features() for c in self)
+        return self.map(lambda cut: cut.drop_features())
 
     def drop_recordings(self) -> "CutSet":
         """
         Return a new :class:`.CutSet`, where each :class:`.Cut` is copied and detached from its recordings.
         """
-        return CutSet.from_cuts(c.drop_recording() for c in self)
+        return self.map(lambda cut: cut.drop_recording())
 
     def drop_supervisions(self) -> "CutSet":
         """
         Return a new :class:`.CutSet`, where each :class:`.Cut` is copied and detached from its supervisions.
         """
-        return CutSet.from_cuts(c.drop_supervisions() for c in self)
+        return self.map(lambda cut: cut.drop_supervisions())
 
     def compute_and_store_features(
         self,
@@ -4544,8 +4668,9 @@ class CutSet(Serializable, AlgorithmMixin):
             for parallel computation).
         :return: Returns a new ``CutSet`` with ``Features`` manifests attached to the cuts.
         """
-        from lhotse.manipulation import combine
         from cytoolz import identity
+
+        from lhotse.manipulation import combine
 
         # Pre-conditions and args setup
         progress = (
@@ -4702,6 +4827,7 @@ class CutSet(Serializable, AlgorithmMixin):
         """
         import torch
         from torch.utils.data import DataLoader
+
         from lhotse.dataset import SingleCutSampler, UnsupervisedWaveformDataset
         from lhotse.qa import validate_features
 
@@ -4890,8 +5016,9 @@ class CutSet(Serializable, AlgorithmMixin):
             for parallel computation).
         :return: Returns a new ``CutSet``.
         """
-        from lhotse.manipulation import combine
         from cytoolz import identity
+
+        from lhotse.manipulation import combine
 
         # Pre-conditions and args setup
         progress = (
@@ -4962,7 +5089,10 @@ class CutSet(Serializable, AlgorithmMixin):
         return cuts
 
     def compute_global_feature_stats(
-        self, storage_path: Optional[Pathlike] = None, max_cuts: Optional[int] = None
+        self,
+        storage_path: Optional[Pathlike] = None,
+        max_cuts: Optional[int] = None,
+        extractor: Optional[FeatureExtractor] = None,
     ) -> Dict[str, np.ndarray]:
         """
         Compute the global means and standard deviations for each feature bin in the manifest.
@@ -4974,9 +5104,29 @@ class CutSet(Serializable, AlgorithmMixin):
         :param storage_path: an optional path to a file where the stats will be stored with pickle.
         :param max_cuts: optionally, limit the number of cuts used for stats estimation. The cuts will be
             selected randomly in that case.
+        :param extractor: optional FeatureExtractor, when provided, we ignore any pre-computed features.
+
         :return a dict of ``{'norm_means': np.ndarray, 'norm_stds': np.ndarray}`` with the
             shape of the arrays equal to the number of feature bins in this manifest.
         """
+        if extractor is not None:
+            cuts = self
+            if max_cuts is not None:
+                cuts = islice(cuts, max_cuts)
+            cuts = iter(cuts)
+            first = next(cuts)
+            stats = StatsAccumulator(
+                feature_dim=extractor.feature_dim(first.sampling_rate)
+            )
+            for cut in chain([first], cuts):
+                arr = cut.compute_features(extractor)
+                stats.update(arr)
+            mvn = stats.get()
+            if storage_path is not None:
+                with open(storage_path, "wb") as f:
+                    pickle.dump(mvn, f)
+            return mvn
+
         have_features = [cut.has_features for cut in self]
         if not any(have_features):
             raise ValueError(
@@ -4996,10 +5146,10 @@ class CutSet(Serializable, AlgorithmMixin):
         )
 
     def with_features_path_prefix(self, path: Pathlike) -> "CutSet":
-        return CutSet.from_cuts(c.with_features_path_prefix(path) for c in self)
+        return self.map(partial(_add_features_path_prefix_single, path=path))
 
     def with_recording_path_prefix(self, path: Pathlike) -> "CutSet":
-        return CutSet.from_cuts(c.with_recording_path_prefix(path) for c in self)
+        return self.map(partial(_add_recording_path_prefix_single, path=path))
 
     def copy_feats(
         self, writer: FeaturesWriter, output_path: Optional[Pathlike] = None
@@ -5047,7 +5197,7 @@ class CutSet(Serializable, AlgorithmMixin):
         a new string (new cut ID).
         :return: a new ``CutSet`` with cuts with modified IDs.
         """
-        return CutSet.from_cuts(c.with_id(transform_fn(c.id)) for c in self)
+        return self.map(lambda cut: cut.with_id(transform_fn(cut.id)))
 
     def fill_supervisions(
         self, add_empty: bool = True, shrink_ok: bool = False
@@ -5068,9 +5218,8 @@ class CutSet(Serializable, AlgorithmMixin):
         :param shrink_ok: should we raise an error if a supervision would be shrank as a result
             of calling this method.
         """
-        return CutSet.from_cuts(
-            cut.fill_supervision(add_empty=add_empty, shrink_ok=shrink_ok)
-            for cut in self
+        return self.map(
+            lambda cut: cut.fill_supervision(add_empty=add_empty, shrink_ok=shrink_ok)
         )
 
     def map_supervisions(
@@ -5082,7 +5231,7 @@ class CutSet(Serializable, AlgorithmMixin):
         :param transform_fn: a function that modifies a supervision as an argument.
         :return: a new, modified CutSet.
         """
-        return CutSet.from_cuts(cut.map_supervisions(transform_fn) for cut in self)
+        return self.map(lambda cut: cut.map_supervisions(transform_fn))
 
     def transform_text(self, transform_fn: Callable[[str], str]) -> "CutSet":
         """
@@ -5120,55 +5269,6 @@ class CutSet(Serializable, AlgorithmMixin):
 
     def __iter__(self) -> Iterable[Cut]:
         return iter(self.cuts.values())
-
-
-def make_windowed_cuts_from_features(
-    feature_set: FeatureSet,
-    cut_duration: Seconds,
-    cut_shift: Optional[Seconds] = None,
-    keep_shorter_windows: bool = False,
-) -> CutSet:
-    """
-    Converts a FeatureSet to a CutSet by traversing each Features object in - possibly overlapping - windows, and
-    creating a MonoCut out of that area. By default, the last window in traversal will be discarded if it cannot satisfy
-    the `cut_duration` requirement.
-
-    :param feature_set: a FeatureSet object.
-    :param cut_duration: float, duration of created Cuts in seconds.
-    :param cut_shift: optional float, specifies how many seconds are in between the starts of consecutive windows.
-        Equals `cut_duration` by default.
-    :param keep_shorter_windows: bool, when True, the last window will be used to create a MonoCut even if
-        its duration is shorter than `cut_duration`.
-    :return: a CutSet object.
-    """
-    if cut_shift is None:
-        cut_shift = cut_duration
-    round_fn = ceil if keep_shorter_windows else floor
-    cuts = []
-    for features in feature_set:
-        # Determine the number of cuts, depending on `keep_shorter_windows` argument.
-        # When its true, we'll want to include the residuals in the output; otherwise,
-        # we provide only full duration cuts.
-        n_cuts = round_fn(features.duration / cut_shift)
-        if (
-            (n_cuts - 1) * cut_shift + cut_duration > features.duration
-            and not keep_shorter_windows
-        ):
-            n_cuts -= 1
-        for idx in range(n_cuts):
-            offset = features.start + idx * cut_shift
-            duration = min(cut_duration, features.end - offset)
-            cuts.append(
-                MonoCut(
-                    id=str(uuid4()),
-                    start=offset,
-                    duration=duration,
-                    channel=features.channels,
-                    features=features,
-                    supervisions=[],
-                )
-            )
-    return CutSet.from_cuts(cuts)
 
 
 def mix(
@@ -5537,9 +5637,13 @@ def create_cut_set_eager(
         features is not None,
         recordings is not None,
     )
+    if sup_ok:
+        supervisions = supervisions.to_eager()  # must be eager to use .find()
     if feat_ok:
         # Case I: Features are provided.
         # Use features to determine the cut boundaries and attach recordings and supervisions as available.
+        if rec_ok:
+            recordings = recordings.to_eager()  # ensure it can be indexed with cut.id
         cuts = CutSet.from_cuts(
             MonoCut(
                 id=str(uuid4())
@@ -5888,3 +5992,25 @@ def _cut_into_windows_single(
         hop=hop,
         keep_excessive_supervisions=keep_excessive_supervisions,
     ).to_eager()
+
+
+def _trim_to_supervisions_single(
+    cuts: CutSet, keep_overlapping, min_duration, context_direction
+) -> CutSet:
+    return cuts.trim_to_supervisions(
+        keep_overlapping=keep_overlapping,
+        min_duration=min_duration,
+        context_direction=context_direction,
+    ).to_eager()
+
+
+def _add_recording_path_prefix_single(cut, path):
+    return cut.with_recording_path_prefix(path)
+
+
+def _add_features_path_prefix_single(cut, path):
+    return cut.with_features_path_prefix(path)
+
+
+def _call(obj, member_fn: str, *args, **kwargs) -> Callable:
+    return getattr(obj, member_fn)(*args, **kwargs)

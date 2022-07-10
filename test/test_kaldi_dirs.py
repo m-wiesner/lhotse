@@ -1,9 +1,14 @@
 import contextlib
 import os
+from pathlib import Path
+
 import pytest
 
 import lhotse
-from pathlib import Path
+
+pytest.importorskip(
+    "kaldi_native_io", reason="Kaldi tests require kaldi_native_io to be installed."
+)
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures"
 
