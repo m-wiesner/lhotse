@@ -153,7 +153,10 @@ class RoundRobinSampler(CutSampler):
         if len(self._nondepleted_samplers_indices) == 0:
             raise StopIteration()
 
-        sampler_idx = self._nondepleted_samplers_indices[self._cur_sampler_idx]
+        try:
+            sampler_idx = self._nondepleted_samplers_indices[self._cur_sampler_idx]
+        except IndexError:
+            raise StopIteration()
         sampler = self.samplers[sampler_idx]
 
         try:
