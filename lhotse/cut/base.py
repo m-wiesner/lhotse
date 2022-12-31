@@ -24,6 +24,7 @@ from lhotse.utils import (
     fastcopy,
     ifnone,
     overlaps,
+    to_hashable,
 )
 
 # One of the design principles for Cuts is a maximally "lazy" implementation, e.g. when mixing Cuts,
@@ -485,7 +486,9 @@ class Cut:
                 # number of channels in underlying tracks.
 
                 # Ensure that all supervisions have the same channel.
-                assert len(set(s.channel for s in trimmed.supervisions)) == 1, (
+                assert (
+                    len(set(to_hashable(s.channel) for s in trimmed.supervisions)) == 1
+                ), (
                     "Trimmed cut has supervisions with different channels. Either set "
                     "`ignore_channel=True` to keep original channels or `keep_overlapping=False` "
                     "to retain only 1 supervision per trimmed cut."
@@ -502,6 +505,102 @@ class Cut:
                 trimmed.id = segment.id
             cuts.append(trimmed)
         return CutSet.from_cuts(cuts)
+
+    def trim_to_alignments(
+        self,
+        type: str,
+        max_pause: Optional[Seconds] = None,
+        delimiter: str = " ",
+        keep_all_channels: bool = False,
+    ) -> "CutSet":  # noqa: F821
+        """
+        Splits the current :class:`.Cut` into its constituent alignment items (:class:`.AlignmentItem`).
+        These cuts have identical start times and durations as the alignment item. Additionally,
+        the `max_pause` option can be used to merge alignment items that are separated by a pause
+        shorter than `max_pause`.
+
+        For the case of a multi-channel cut with multiple alignments, we can either trim
+        while respecting the supervision channels (in which case output cut has the same channels
+        as the supervision) or ignore the channels (in which case output cut has the same channels
+        as the input cut).
+
+        .. hint:: If the resulting trimmed cut contains a single supervision, we set the cut id to
+            the ``id`` of this supervision, for better compatibility with downstream tools, e.g.
+            comparing the hypothesis of ASR with the reference in icefall.
+
+        .. hint:: If a MultiCut is trimmed and the resulting trimmed cut contains a single channel,
+            we convert it to a MonoCut.
+
+        :param type: The type of the alignment to trim to (e.g. "word").
+        :param max_pause: The maximum pause allowed between the alignments to merge them. If ``None``,
+            no merging will be performed. [default: None]
+        :param delimiter: The delimiter to use when joining the alignment items.
+        :param keep_all_channels: If ``True``, the output cut will have the same channels as the input cut. By default,
+            the trimmed cut will have the same channels as the supervision.
+        :param num_jobs: Number of parallel workers to process the cuts.
+        :return: a CutSet object.
+        """
+        from lhotse.supervision import AlignmentItem
+
+        if max_pause is None:
+            # Set to a negative value so that no merging is performed.
+            max_pause = -1.0
+
+        # For the implementation, we first create new supervisions for the cut, and then
+        # use the `trim_to_supervisions` method to do the actual trimming.
+        new_supervisions = []
+        for segment in self.supervisions:
+            if (
+                segment.alignment is None
+                or type not in segment.alignment
+                or not segment.alignment[type]
+            ):
+                continue
+            alignments = sorted(segment.alignment[type], key=lambda a: a.start)
+
+            # Merge the alignments if needed. We also keep track of the indices of the
+            # merged alignments in the original list. This is needed to create the
+            # `alignment` field in the new supervisions.
+            merged_alignments = [(alignments[0], [0])]
+            for i, item in enumerate(alignments[1:]):
+                # If alignment item is blank, skip it. Sometimes, blank alignment items
+                # are used to denote pauses in the utterance.
+                if item.symbol.strip() == "":
+                    continue
+                prev_item, prev_indices = merged_alignments[-1]
+                if item.start - prev_item.end <= max_pause:
+                    new_item = AlignmentItem(
+                        symbol=delimiter.join([prev_item.symbol, item.symbol]),
+                        start=prev_item.start,
+                        duration=item.end - prev_item.start,
+                    )
+                    merged_alignments[-1] = (new_item, prev_indices + [i + 1])
+                else:
+                    merged_alignments.append((item, [i + 1]))
+
+            # Create new supervisions for the merged alignments.
+            for i, (item, indices) in enumerate(merged_alignments):
+                new_supervisions.append(
+                    SupervisionSegment(
+                        id=f"{segment.id}-{i}",
+                        recording_id=segment.recording_id,
+                        start=item.start,
+                        duration=item.duration,
+                        channel=segment.channel,
+                        text=item.symbol,
+                        language=segment.language,
+                        speaker=segment.speaker,
+                        gender=segment.gender,
+                        alignment={type: [alignments[j] for j in indices]},
+                    )
+                )
+
+        # Create a copy of this CutSet so that original supervisions do not get modified.
+        new_cuts = fastcopy(self, supervisions=new_supervisions)
+        return new_cuts.trim_to_supervisions(
+            keep_overlapping=False,
+            keep_all_channels=keep_all_channels,
+        )
 
     def cut_into_windows(
         self,
@@ -573,36 +672,23 @@ class Cut:
                     )
         return indexed
 
-    @deprecated(
-        "Cut.compute_and_store_recording will be removed in a future release. Please use save_audio() instead."
-    )
-    def compute_and_store_recording(
-        self,
-        storage_path: Pathlike,
-        augment_fn: Optional[AugmentFn] = None,
-    ) -> "Cut":
-        """
-        Store this cut's waveform as audio recording to disk.
-
-        :param storage_path: The path to location where we will store the audio recordings.
-        :param augment_fn: an optional callable used for audio augmentation.
-            Be careful with the types of augmentations used: if they modify
-            the start/end/duration times of the cut and its supervisions,
-            you will end up with incorrect supervision information when using this API.
-            E.g. for speed perturbation, use ``CutSet.perturb_speed()`` instead.
-        :return: a new MonoCut instance.
-        """
-        return self.save_audio(storage_path=storage_path, augment_fn=augment_fn)
-
     def save_audio(
         self,
         storage_path: Pathlike,
+        encoding: Optional[str] = None,
+        bits_per_sample: Optional[int] = None,
         augment_fn: Optional[AugmentFn] = None,
     ) -> "Cut":
         """
         Store this cut's waveform as audio recording to disk.
 
         :param storage_path: The path to location where we will store the audio recordings.
+        :param encoding: Audio encoding argument supported by ``torchaudio.save``. See
+            https://pytorch.org/audio/stable/backend.html#save (sox_io backend) and
+            https://pytorch.org/audio/stable/backend.html#id3 (soundfile backend) for more details.
+        :param bits_per_sample: Audio bits_per_sample argument supported by ``torchaudio.save``. See
+            https://pytorch.org/audio/stable/backend.html#save (sox_io backend) and
+            https://pytorch.org/audio/stable/backend.html#id3 (soundfile backend) for more details.
         :param augment_fn: an optional callable used for audio augmentation.
             Be careful with the types of augmentations used: if they modify
             the start/end/duration times of the cut and its supervisions,
@@ -618,7 +704,11 @@ class Cut:
             samples = augment_fn(samples, self.sampling_rate)
 
         torchaudio.save(
-            str(storage_path), torch.as_tensor(samples), sample_rate=self.sampling_rate
+            str(storage_path),
+            torch.as_tensor(samples),
+            sample_rate=self.sampling_rate,
+            encoding=encoding,
+            bits_per_sample=bits_per_sample,
         )
         recording = Recording(
             id=storage_path.stem,

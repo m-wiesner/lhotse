@@ -54,6 +54,9 @@ def simple(
     Either RECORDING_MANIFEST or FEATURE_MANIFEST has to be provided.
     When SUPERVISION_MANIFEST is provided, the cuts time span will correspond to that of the supervision segments.
     Otherwise, that time span corresponds to the one found in features, if available, otherwise recordings.
+
+    .. hint::
+        ``--force-eager`` must be used when the RECORDING_MANIFEST is not sorted by recording ID.
     """
     supervision_set, feature_set, recording_set = [
         load_manifest_lazy_or_eager(p) if p is not None else None
@@ -112,12 +115,20 @@ def simple(
             The value of "center" implies equal expansion to left and right;
             random uniformly samples a value between "left" and "right".""",
 )
+@click.option(
+    "--keep-all-channels/--discard-extra-channels",
+    type=bool,
+    default=False,
+    help="""If ``True``, the output cut will have the same channels as the input cut. By default,
+            the trimmed cut will have the same channels as the supervision.""",
+)
 def trim_to_supervisions(
     cuts: Pathlike,
     output_cuts: Pathlike,
     keep_overlapping: bool,
     min_duration: Optional[float],
     context_direction: str,
+    keep_all_channels: bool,
 ):
     """
     Splits each input cut into as many cuts as there are supervisions.
@@ -154,6 +165,63 @@ def trim_to_supervisions(
             keep_overlapping=keep_overlapping,
             min_duration=min_duration,
             context_direction=context_direction,
+            keep_all_channels=keep_all_channels,
+        ):
+            writer.write(cut)
+
+
+@cut.command()
+@click.argument("cuts", type=click.Path(exists=True, dir_okay=False, allow_dash=True))
+@click.argument("output_cuts", type=click.Path(allow_dash=True))
+@click.option(
+    "--type", type=str, default="word", help="Alignment type to use for trimming"
+)
+@click.option(
+    "--max-pause",
+    type=float,
+    default=0.0,
+    help="Merge alignments separated by a pause shorter than this value",
+)
+@click.option(
+    "--delimiter",
+    "-d",
+    type=str,
+    default=" ",
+    help="Delimiter to use for concatenating alignment symbols for merging",
+)
+@click.option(
+    "--keep-all-channels/--discard-extra-channels",
+    type=bool,
+    default=False,
+    help="""If ``True``, the output cut will have the same channels as the input cut. By default,
+            the trimmed cut will have the same channels as the supervision.""",
+)
+def trim_to_alignments(
+    cuts: Pathlike,
+    output_cuts: Pathlike,
+    type: str,
+    max_pause: float,
+    delimiter: str,
+    keep_all_channels: bool,
+):
+    """
+    Return a new CutSet with Cuts that have identical spans as the alignments of
+    type `type`. An additional `max_pause` is allowed between the alignments to
+    merge contiguous alignment items.
+
+    For the case of a multi-channel cut with multiple alignments, we can either trim
+    while respecting the supervision channels (in which case output cut has the same channels
+    as the supervision) or ignore the channels (in which case output cut has the same channels
+    as the input cut).
+    """
+    cuts = CutSet.from_file(cuts)
+
+    with CutSet.open_writer(output_cuts) as writer:
+        for cut in cuts.trim_to_alignments(
+            type=type,
+            max_pause=max_pause,
+            delimiter=delimiter,
+            keep_all_channels=keep_all_channels,
         ):
             writer.write(cut)
 

@@ -620,6 +620,8 @@ class SupervisionSet(Serializable, AlgorithmMixin):
                     parts = line.strip().split()
                     assert len(parts) == 10, f"Invalid RTTM line in file {file}: {line}"
                     recording_id = parts[1]
+                    if float(parts[4]) == 0:  # skip empty segments
+                        continue
                     segments.append(
                         SupervisionSegment(
                             id=f"{recording_id}-{idx:06d}",
@@ -669,7 +671,12 @@ class SupervisionSet(Serializable, AlgorithmMixin):
                     num_overspanned += len(alignment)
                     segments.append(fastcopy(seg, alignment={type: alignment}))
             else:
-                segments.append([s for s in self.find(recording_id=reco_id)])
+                segments.extend(
+                    [
+                        fastcopy(s, alignment={type: []})
+                        for s in self.find(recording_id=reco_id)
+                    ]
+                )
         logging.info(
             f"{num_overspanned} alignments added out of {num_total} total. If there are several"
             " missing, there could be a mismatch problem."
