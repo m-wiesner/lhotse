@@ -36,6 +36,7 @@ from .magicdata import download_magicdata, prepare_magicdata
 from .mgb2 import prepare_mgb2
 from .mls import prepare_mls
 from .mobvoihotwords import download_mobvoihotwords, prepare_mobvoihotwords
+from .mixer6 import prepare_mixer6
 from .mtedx import download_mtedx, prepare_mtedx
 from .musan import download_musan, prepare_musan
 from .nsc import prepare_nsc
