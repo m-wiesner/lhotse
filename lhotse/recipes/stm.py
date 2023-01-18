@@ -22,6 +22,7 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None):
             except ValueError:
                 wav, chn, spk, beg, end, lbl = l.strip().split(None, 5) 
                 txt = ""
+                assert len(lbl.split()) == 1
 
             # Retrieve channel information and convert A/B phone conversations to
             # integers. A --> 0, B --> 1 
@@ -36,25 +37,31 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None):
                 {
                     'wav': wav,
                     'chn': chn,
+                    'spk': spk,
                     'beg': beg,
                     'end': end,
                     'lbl': lbl,
                     'txt': txt,
                 }
             )
-    
+   
     group_fun = lambda x: x['wav']
-    recordings = RecordingSet.from_recordings(
-        Recording.from_file(k) for k, g in groupby(stm_entries, group_fun):
-    ) 
-    
+    group_iter = list(groupby(sorted(stm_entries, key=group_fun), group_fun))
+    recordings = []
+    for k, g in tqdm(group_iter, desc=f"Making recordings from {fname}"):
+        recording_id = str(Path(k).with_suffix("")).replace("/", "_")[1:]
+        recordings.append(Recording.from_file(k, recording_id=recording_id))
+    recording_set = RecordingSet.from_recordings(recordings) 
+
     supervisions = []
     for utt in stm_entries:
-        recoid = Path(utt['wav']).stem
-        beg = utt['beg']
-        begstr = format(int(format(beg, '0.3f').replace('.', '')), '010d')
-        if end - beg <= 0.01:
+        recoid = str(Path(utt['wav']).with_suffix("")).replace("/", "_")[1:]
+        beg, end = utt['beg'], utt['end']
+        beg_str = format(int(format(beg, '0.3f').replace('.', '')), '010d')
+        duration = end - beg
+        if duration <= 0.01:
             raise ValueError(f"The duration of {utt} in stm file {fname} is too short")
+        
         uttid = '_'.join([utt['spk'], str(utt['chn']), recoid, beg_str])
         supervisions.append(
             SupervisionSegment(
@@ -63,18 +70,19 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None):
                 start=beg,
                 duration=round(end - beg, 4),
                 channel=utt['chn'],
-                language=language,
+                language=tgt,
                 speaker=utt['spk'],
                 text=utt['txt'],
                 custom={'src_lang': src, 'tgt_lang': tgt},
             )
-    supervision_set = SupervisionSet.from_segments(supervisions) 
+        )
+    supervision_set = SupervisionSet.from_segments(supervisions)
     recording_set, supervision_set = fix_manifests(recording_set, supervision_set)
     validate_recordings_and_supervisions(recording_set, supervision_set)
     return recording_set, supervision_set
 
 
-def pepare_stm(
+def prepare_stm(
     stm_files: list,
     output_dir: Optional[Pathlike] = None,
     src_tgt_langs: Optional[List[Tuple]] = None,
@@ -82,7 +90,7 @@ def pepare_stm(
    
     sups = SupervisionSet.from_segments([])
     recos = RecordingSet.from_recordings([])
-    for i, stm_file in enumerate(stm_files):
+    for i, stm_file in tqdm(enumerate(stm_files), desc="Making supervisions"):
         stm_file = Path(stm_file)
         if not stm_file.is_file():
             raise ValueError(f"{stm_file} does not exist")
@@ -91,7 +99,7 @@ def pepare_stm(
             src, tgt = src_tgt_langs[i]
         else:
             src, tgt = None, None
-        sups_i, recos_i = stm_to_supervisions_and_recordings(
+        recos_i, sups_i = stm_to_supervisions_and_recordings(
             stm_file,
             src=src,
             tgt=tgt
@@ -103,8 +111,8 @@ def pepare_stm(
     recording_set, supervision_set = fix_manifests(recos, sups)
     validate_recordings_and_supervisions(recording_set, supervision_set)
     manifests = {
-        "recordings": recordings,
-        "supervisions": supervisions,
+        "recordings": recording_set,
+        "supervisions": supervision_set,
     }
     
     # Dump manifests to output dir if it is specified
@@ -112,8 +120,8 @@ def pepare_stm(
         if isinstance(output_dir, str):
             output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        recordings.to_file(output_dir / f"recordings.jsonl.gz")
-        supervisions.to_file(output_dir / f"supervisions.jsonl.gz")
+        recording_set.to_file(output_dir / f"recordings.jsonl.gz")
+        supervision_set.to_file(output_dir / f"supervisions.jsonl.gz")
     
     return dict(manifests)
 
