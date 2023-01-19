@@ -11,7 +11,8 @@ from itertools import groupby
 import soundfile as sf
 
 
-def stm_to_supervisions_and_recordings(fname, src=None, tgt=None):
+
+def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=True):
     with open(str(fname), 'r', encoding='utf-8') as f:
         stm_entries = []
         for l in f:
@@ -57,15 +58,27 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None):
     recording_set = RecordingSet.from_recordings(recordings) 
 
     supervisions = []
+    utts = set()
     for utt in stm_entries:
         recoid = str(Path(utt['wav']).with_suffix("")).replace("/", "_")[1:] + f"_{utt['chn']}"
         beg, end = utt['beg'], utt['end']
         beg_str = format(int(format(beg, '0.3f').replace('.', '')), '010d')
         duration = end - beg
         if duration <= 0.01:
-            raise ValueError(f"The duration of {utt} in stm file {fname} is too short")
+            if permissive:
+                print(f"The duration of {utt} in stm file {fname} is too short") 
+                continue
+            else:
+                raise ValueError(f"The duration of {utt} in stm file {fname} is too short")
         
-        uttid = '_'.join([utt['spk'], str(utt['chn']), recoid, beg_str])
+        uttid = '_'.join([utt['spk'], str(utt['chn']), recoid, tgt, beg_str])
+        if uttid in utts:
+            if permissive:
+                print(f"Duplicate utterance id {uttid}")
+                continue
+            else:
+                raise ValueError(f"Detected duplicate utterance id {uttid}")
+        utts.add(uttid)
         supervisions.append(
             SupervisionSegment(
                 id=uttid,
@@ -89,10 +102,12 @@ def prepare_stm(
     stm_files: list,
     output_dir: Optional[Pathlike] = None,
     src_tgt_langs: Optional[List[Tuple]] = None,
+    permissive: bool = True,
 ) -> Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]:
    
     sups = SupervisionSet.from_segments([])
     recos = RecordingSet.from_recordings([])
+    recoids = set()
     for i, stm_file in tqdm(enumerate(stm_files), desc="Making supervisions"):
         stm_file = Path(stm_file)
         if not stm_file.is_file():
@@ -107,8 +122,10 @@ def prepare_stm(
             src=src,
             tgt=tgt
         )
-        sups = sups + sups_i
-        recos = recos + recos_i
+        sups = sups + sups_i.filter(lambda s: s not in sups)
+        recos = recos + recos_i.filter(lambda r: r.id not in recoids)
+        for r in recos_i:
+            recoids.add(r.id)
 
     # Clean up supervisions and recordings
     recording_set, supervision_set = fix_manifests(recos, sups)
