@@ -45,17 +45,20 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None):
                 }
             )
    
-    group_fun = lambda x: x['wav']
+    group_fun = lambda x: (x['wav'], x['chn'])
     group_iter = list(groupby(sorted(stm_entries, key=group_fun), group_fun))
     recordings = []
     for k, g in tqdm(group_iter, desc=f"Making recordings from {fname}"):
-        recording_id = str(Path(k).with_suffix("")).replace("/", "_")[1:]
-        recordings.append(Recording.from_file(k, recording_id=recording_id))
+        recording_id = str(Path(k[0]).with_suffix("")).replace("/", "_")[1:] + f"_{k[1]}"
+        reco = Recording.from_file(k[0], recording_id=recording_id)
+        for s in reco.sources:
+            s.channels = [k[1]]
+        recordings.append(reco)
     recording_set = RecordingSet.from_recordings(recordings) 
 
     supervisions = []
     for utt in stm_entries:
-        recoid = str(Path(utt['wav']).with_suffix("")).replace("/", "_")[1:]
+        recoid = str(Path(utt['wav']).with_suffix("")).replace("/", "_")[1:] + f"_{utt['chn']}"
         beg, end = utt['beg'], utt['end']
         beg_str = format(int(format(beg, '0.3f').replace('.', '')), '010d')
         duration = end - beg
