@@ -57,6 +57,7 @@ from .rir_noise import *
 from .speechcommands import *
 from .spgispeech import *
 from .stcmds import *
+from .stm import *
 from .switchboard import *
 from .tal_asr import *
 from .tal_csasr import *
