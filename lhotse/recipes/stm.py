@@ -122,7 +122,7 @@ def prepare_stm(
             src=src,
             tgt=tgt
         )
-        sups = sups + sups_i.filter(lambda s: s not in sups)
+        sups = sups + sups_i
         recos = recos + recos_i.filter(lambda r: r.id not in recoids)
         for r in recos_i:
             recoids.add(r.id)

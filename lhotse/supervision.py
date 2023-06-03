@@ -636,6 +636,77 @@ class SupervisionSet(Serializable, AlgorithmMixin):
                     )
         return SupervisionSet.from_segments(segments)
 
+    @staticmethod
+    def from_stm(path: Union[Pathlike, Iterable[Pathlike]], olabel=None) -> "SupervisionSet":
+        """
+        Read an RTTM file located at ``path`` (or an iterator) and create a :class:`.SupervisionSet` manifest for them.
+        Can be used to create supervisions from custom RTTM files (see, for example, :class:`lhotse.dataset.DiarizationDataset`).
+
+        .. code:: python
+
+            >>> from lhotse import SupervisionSet
+            >>> sup1 = SupervisionSet.from_stm('/path/to/stm_file')
+            >>> sup2 = SupervisionSet.from_stm(Path('/path/to/stm_dir').rglob('ref_*.stm'))
+        """
+        import os
+        def _parse_stm_line(l, olabel=None):
+            try:
+                recoid, chn, spk, beg, end, lbl, txt = l.strip().split(None, 6)
+            except ValueError:
+                recoid, chn, spk, beg, end, lbl = l.strip().split(None, 5)
+                txt = ""
+                assert len(lbl.split()) == 1
+            # Process channel information. Phone conversations often use two
+            # channels marked A, B for the two channels
+            if chn.lower() == "a":
+                chn = 0
+            elif chn.lower() == "b":
+                chn = 1
+            else:
+                chn = int(chn)
+            beg, end = float(beg), float(end)
+            # Let's process the recoid now. Sometimes the recoid is a path to
+            # an audio file. 
+            if Path(recoid).is_file():
+                recoid = str(Path(recoid).with_suffix(""))
+                recoid = recoid.replace(os.sep, "_")[1:]
+
+            # Turn the start time into a string that when sorted
+            # lexicographically is also sorted by time
+            beg_str = format(int(format(beg, '0.3f').replace('.', '')), '010d')
+            duration = end - beg
+            if duration <= 0.01:
+                if permissive:
+                    print(f"The duration of {l} is too short")
+                else:
+                    raise ValueError(f"The duration of {l} is too short")
+            olabel = olabel if olabel is not None else "o"
+            uttid = '_'.join(
+                [spk, str(chn), recoid, olabel, beg_str]
+            )
+                        
+            return SupervisionSegment(
+                id=uttid,
+                recording_id=recoid,
+                start=beg,
+                duration=round(end - beg, 4),
+                channel=chn,
+                language=olabel,
+                speaker=spk,
+                text=txt,
+            )
+            
+        from pathlib import Path
+        path = [path] if isinstance(path, (Path, str)) else path
+
+        segments = []
+        for file in path:
+            with open(file, "r") as f:
+                for l in f:
+                    segment = _parse_stm_line(l, olabel=olabel)
+                    segments.append(segment)
+        return SupervisionSet.from_segments(segments)
+
     def with_alignment_from_ctm(
         self, ctm_file: Pathlike, type: str = "word", match_channel: bool = False
     ) -> "SupervisionSet":

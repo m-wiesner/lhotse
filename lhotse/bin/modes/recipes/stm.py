@@ -6,11 +6,11 @@ from lhotse.bin.modes import prepare
 from lhotse.recipes.stm import prepare_stm
 from lhotse.utils import Pathlike
 
-#__all__ = ["stm"]
+__all__ = ["stm"]
 
 @prepare.command(context_settings=dict(show_default=True))
 @click.argument("stms")
-@click.argument("output_dir", type=click.Path())
+@click.argument("output_dir", type=click.Path(dir_okay=True))
 @click.option(
     "-l",
     "--langs",
