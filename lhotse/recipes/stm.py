@@ -103,6 +103,7 @@ def prepare_stm(
     output_dir: Optional[Pathlike] = None,
     src_tgt_langs: Optional[List[Tuple]] = None,
     permissive: bool = True,
+    name: str = "stm",
 ) -> Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]:
    
     sups = SupervisionSet.from_segments([])
@@ -140,8 +141,8 @@ def prepare_stm(
         if isinstance(output_dir, str):
             output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        recording_set.to_file(output_dir / f"recordings.jsonl.gz")
-        supervision_set.to_file(output_dir / f"supervisions.jsonl.gz")
+        recording_set.to_file(output_dir / f"recordings_{name}.jsonl.gz")
+        supervision_set.to_file(output_dir / f"supervisions_{name}.jsonl.gz")
     
     return dict(manifests)
 

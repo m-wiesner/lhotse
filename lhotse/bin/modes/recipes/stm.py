@@ -18,14 +18,27 @@ __all__ = ["stm"]
     default=1,
     help="The src-tgt language pairs in a comma-separated list"
 )
+@click.option(
+    "-p",
+    "--prefix",
+    type=str,
+    default="stm",
+    help="The dataset name that will be a prefix for the manifest filenames."
+)
 def stm(
     stms: str,
     output_dir: Pathlike,
-    langs: Optional[List[Tuple]],
+    langs: Optional[List[Tuple]] = None,
+    prefix: str = "stm", 
 ):
     """STM data preparation"""
     stm_files = stms.split(',')
     src_tgt_langs = [tuple(l.split('-')) for l in langs.split(',')]
-    prepare_stm(stm_files, output_dir=output_dir, src_tgt_langs=src_tgt_langs)
+    prepare_stm(
+        stm_files,
+        output_dir=output_dir,
+        src_tgt_langs=src_tgt_langs,
+        prefix=prefix,
+    )
 
 
