@@ -24,7 +24,7 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=Tru
                 wav, chn, spk, beg, end, lbl = l.strip().split(None, 5) 
                 txt = ""
                 assert len(lbl.split()) == 1
-
+            
             # Retrieve channel information and convert A/B phone conversations to
             # integers. A --> 0, B --> 1 
             if chn == "A":
@@ -34,6 +34,10 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=Tru
             else:
                 chn = int(chn)
             beg, end = float(beg), float(end)
+            if end - beg < 0.01: 
+                print(f"The utterance is too short")
+                print(f"{l}")
+                continue;
             stm_entries.append(
                 {
                     'wav': wav,
