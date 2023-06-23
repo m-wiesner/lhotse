@@ -6,10 +6,9 @@ from tqdm import tqdm
 from lhotse import validate_recordings_and_supervisions, fix_manifests
 from lhotse.audio import Recording, RecordingSet, AudioSource, sph_info
 from lhotse.supervision import SupervisionSegment, SupervisionSet
-from lhotse.utils import Pathlike, Seconds, is_module_available
+from lhotse.utils import Pathlike, Seconds, is_module_available, fastcopy
 from itertools import groupby
 import soundfile as sf
-
 
 
 def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=True):
@@ -56,8 +55,16 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=Tru
     for k, g in tqdm(group_iter, desc=f"Making recordings from {fname}"):
         recording_id = str(Path(k[0]).with_suffix("")).replace("/", "_")[1:] + f"_{k[1]}"
         reco = Recording.from_file(k[0], recording_id=recording_id)
+        # We want to treat these as mono recordings (not multicut recordings).
+        # So, we create an extra recording as if there were extra audiofiles, for
+        # each channel.
         for s in reco.sources:
             s.channels = [k[1]]
+            reco.channel_ids = [k[1]]
+            #reco_ = fastcopy(reco)
+            #reco_.sources[s].channels = [k[1]]
+            #reco_.channel_ids = [k[1]]
+            #recordings.append(reco_)
         recordings.append(reco)
     recording_set = RecordingSet.from_recordings(recordings) 
 

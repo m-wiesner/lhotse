@@ -184,7 +184,6 @@ class AudioSource:
 
         # TODO: refactor when another source type is added
         source = self.source
-
         if self.type == "command":
             if (offset != 0.0 or duration is not None) and not AudioCache.enabled():
                 warnings.warn(
@@ -619,6 +618,8 @@ class Recording:
                 duration=duration_aug,
                 force_opus_sampling_rate=self.sampling_rate,
             )
+            if len(samples.shape) == 2:
+                samples = samples[source.channels, :].squeeze()
 
             # Case: two-channel audio file but only one channel requested
             #       it might not be optimal to load all channels, but IDK if there's anything we can do about it
@@ -1793,6 +1794,9 @@ def info(
         # can't be handled by neither pysoundfile nor pyaudioread.
         return sph_info(path)
 
+    #elif path.suffix.lower() == ".m4a":
+    #    pass
+
     try:
         # Try to parse the file using torchaudio first.
         return torchaudio_info(path)
@@ -2423,6 +2427,9 @@ def read_sph(
 
     return audio, sampling_rate
 
+
+#def read_m4a(
+#    cmd = f"ffmpeg -i {} -f wav pipe:1"
 
 def torchaudio_save_flac_safe(
     dest: Union[str, Path, BytesIO],
