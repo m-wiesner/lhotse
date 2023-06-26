@@ -9,6 +9,19 @@ from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import Pathlike, Seconds, is_module_available, fastcopy
 from itertools import groupby
 import soundfile as sf
+import lhotse
+
+from lhotse.audio import set_ffmpeg_torchaudio_info_enabled
+import torchaudio
+import torch
+
+torchaudio.set_audio_backend("soundfile")
+set_ffmpeg_torchaudio_info_enabled(False)
+
+# Torch's multithreaded behavior needs to be disabled or
+# it wastes a lot of CPU and slow things down.
+# Do this outside of main() in case it needs to take effect
+# even when we are not invoking the main (e.g. when spawning subprocesses).
 
 
 def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=True):
