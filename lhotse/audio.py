@@ -1794,9 +1794,6 @@ def info(
         # can't be handled by neither pysoundfile nor pyaudioread.
         return sph_info(path)
 
-    #elif path.suffix.lower() == ".m4a":
-    #    pass
-
     try:
         # Try to parse the file using torchaudio first.
         return torchaudio_info(path)
