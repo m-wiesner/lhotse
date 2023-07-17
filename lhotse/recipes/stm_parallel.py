@@ -15,6 +15,9 @@ from lhotse.audio import set_ffmpeg_torchaudio_info_enabled
 import torchaudio
 import torch
 
+from itertools import repeat
+from lhotse.parallel import parallel_map
+
 torchaudio.set_audio_backend("soundfile")
 set_ffmpeg_torchaudio_info_enabled(False)
 
@@ -24,7 +27,9 @@ set_ffmpeg_torchaudio_info_enabled(False)
 # even when we are not invoking the main (e.g. when spawning subprocesses).
 
 
-def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=True):
+def stm_to_supervisions_and_recordings(fname, src=None, tgt=None,
+    permissive=True, num_jobs=4,
+):
     with open(str(fname), 'r', encoding='utf-8') as f:
         stm_entries = []
         for l in tqdm(f, desc="Parsing the stm ..."):
@@ -65,22 +70,17 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=Tru
     group_fun = lambda x: (x['wav'], x['chn'])
     group_iter = list(groupby(sorted(stm_entries, key=group_fun), group_fun))
     recordings = []
-    for k, g in tqdm(group_iter, desc=f"Making recordings from {fname}"):
-        recording_id = str(Path(k[0]).with_suffix("")).replace("/", "_")[1:] + f"_{k[1]}"
-        reco = Recording.from_file(k[0], recording_id=recording_id)
-        # We want to treat these as mono recordings (not multicut recordings).
-        # So, we create an extra recording as if there were extra audiofiles, for
-        # each channel.
-        for s in reco.sources:
-            s.channels = [k[1]]
-            reco.channel_ids = [k[1]]
-            #reco_ = fastcopy(reco)
-            #reco_.sources[s].channels = [k[1]]
-            #reco_.channel_ids = [k[1]]
-            #recordings.append(reco_)
+    for reco in tqdm(
+        parallel_map(
+            _make_reco_from_stm_entry, 
+            group_iter,
+            num_jobs=num_jobs,
+        ),
+        desc=f"Making recordings from {fname}"
+    ):
         recordings.append(reco)
     recording_set = RecordingSet.from_recordings(recordings) 
-
+        
     supervisions = []
     utts = set()
     for utt in stm_entries:
@@ -121,13 +121,32 @@ def stm_to_supervisions_and_recordings(fname, src=None, tgt=None, permissive=Tru
     validate_recordings_and_supervisions(recording_set, supervision_set)
     return recording_set, supervision_set
 
+def _make_reco_from_stm_entry(stm_entry):
+    '''
+        stm_entry is a tuple of key, group.
+            key is (path/to/audio.wav, channel).
+            group is not used.
+    '''
+    k, _ = stm_entry
+    recording_id = str(Path(k[0]).with_suffix("")).replace("/", "_")[1:] + f"_{k[1]}"
+    reco = Recording.from_file(k[0], recording_id=recording_id)
+    # We want to treat these as mono recordings (not multicut recordings).
+    # So, we create an extra recording as if there were extra audiofiles, for
+    # each channel.
+    for s in reco.sources:
+        s.channels = [k[1]]
+        reco.channel_ids = [k[1]]
+    return reco 
 
-def prepare_stm(
+
+
+def prepare_stm_parallel(
     stm_files: list,
     output_dir: Optional[Pathlike] = None,
     src_tgt_langs: Optional[List[Tuple]] = None,
     permissive: bool = True,
     name: str = "stm",
+    num_jobs: int = 4,
 ) -> Dict[str, Dict[str, Union[RecordingSet, SupervisionSet]]]:
    
     sups = SupervisionSet.from_segments([])
@@ -145,7 +164,8 @@ def prepare_stm(
         recos_i, sups_i = stm_to_supervisions_and_recordings(
             stm_file,
             src=src,
-            tgt=tgt
+            tgt=tgt,
+            num_jobs=num_jobs,
         )
         sups = sups + sups_i
         recos = recos + recos_i.filter(lambda r: r.id not in recoids)

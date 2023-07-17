@@ -56,6 +56,7 @@ from .speechcommands import download_speechcommands, prepare_speechcommands
 from .spgispeech import download_spgispeech, prepare_spgispeech
 from .stcmds import download_stcmds, prepare_stcmds
 from .stm import prepare_stm
+from .stm_parallel import prepare_stm_parallel
 from .switchboard import prepare_switchboard
 from .tedlium import download_tedlium, prepare_tedlium
 from .thchs_30 import download_thchs_30, prepare_thchs_30

@@ -497,3 +497,23 @@ def export_to_webdataset(
         load_custom=custom,
         fault_tolerant=fault_tolerant,
     )
+
+@cut.command()
+@click.argument("cuts", type=click.Path(exists=True, dir_okay=False, allow_dash=True))
+@click.argument("speed", type=float)
+@click.argument("output_cuts", type=click.Path(allow_dash=True))
+def perturb_speed(
+    cuts: Pathlike,
+    output_cuts: Pathlike,
+    speed: float,
+):
+    """
+        Create a copy of the cuts that is speed perturbed
+
+        lhotse cut input 0.9 output
+    """
+    cuts = CutSet.from_file(cuts)
+    with CutSet.open_writer(output_cuts) as writer:
+        for cut in cuts.perturb_speed(speed):
+            writer.write(cut)
+

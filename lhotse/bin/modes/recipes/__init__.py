@@ -58,6 +58,7 @@ from .speechcommands import *
 from .spgispeech import *
 from .stcmds import *
 from .stm import *
+from .stm_parallel import *
 from .switchboard import *
 from .tal_asr import *
 from .tal_csasr import *
