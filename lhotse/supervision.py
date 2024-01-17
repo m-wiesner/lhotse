@@ -28,6 +28,7 @@ from lhotse.utils import (
     ifnone,
     index_by_id_and_check,
     is_equal_or_contains,
+    merge_items_with_delimiter,
     overspans,
     perturb_num_samples,
     split_manifest_lazy,
@@ -774,6 +775,163 @@ class SupervisionSet(Serializable, AlgorithmMixin):
 
     def to_dicts(self) -> Iterable[dict]:
         return (s.to_dict() for s in self)
+
+    def combine_segments(
+        self,
+        max_consecutive=None, max_duration=30, min_duration=2, max_gap=1.5,
+    ) -> "SupervisionSet":
+        """
+        Combine short segments if they match the speaker and recording_id. This
+        function should be used to restore longer segments when the supervisions
+        were over-segmented. We always assume segments can only be merged if
+        they share the same recording_id. We specify a max_gap between speech
+        segments that is allowable. 
+        
+        If the amount of silence between utterances > max_gap than
+        the segments should be split. The one exception to this is if the
+        segment is too short (shorter than min_duration). Otherwise, segments
+        should also be split if they last more than max_duration sec. We also
+        specify a max_consecutive number of segments that can be merged. The
+        only segments that are allowed to violate these constraints are segments
+        from the "left-over" speech at the ends of utterances.
+
+        :param max_consecutive: The maximum number of consecutive segments to combine
+        :param max_duration: The maximum duration of combined segments
+        :param min_duration: The minimum duration of the combined segments
+        :param max_gap: The maximum allowed gap (silence) between supervisions
+        
+        :return: A SupervisionSet consisting of the merged segments     
+        """
+        if len(self) <= 1:
+            return self
+
+        merge_custom = lambda k, vs: merge_items_with_delimiter(map(str, vs))
+
+        # First we need to sort and group superisions by the matching fields
+        groups = groupby(
+            sorted(self, key=lambda x: (x.recording_id, x.speaker, x.start)),
+            key=lambda x: (x.recording_id, x.speaker),
+        )
+        new_segs = []
+        for k, g in groups:
+            sups = sorted(g, key=lambda x: x.start)
+            text = []
+            start = end = channels = languages = speakers = ids = genders = recording_id = None
+            for s in sups:
+                if start is None:
+                    start = s.start
+                    end = start + s.duration
+                    recording_id = s.recording_id
+                    ids = [s.id]
+                    text = [s.text]
+                    languages = [s.language]
+                    speakers = [s.speaker]
+                    genders = [s.gender]
+                    if isinstance(s.channel, list):
+                        channels = [c for c in s.channel]
+                    else:
+                        channels = [s.channel]
+                    if s.custom is not None:
+                        custom = {k: [] for k in s.custom}
+                        for k in custom:
+                            custom[k].append(s.custom[k])
+                    else:
+                        custom = None
+                    continue
+                
+                has_break = (
+                    s.start - end > max_gap and 
+                    end - start > min_duration
+                )
+                has_too_many_segs = (
+                    max_consecutive is not None and 
+                    len(ids) > max_consecutive
+                )
+                would_be_too_long = (
+                    s.start + s.duration - start > max_duration
+                )
+                if has_break or has_too_many_segs or would_be_too_long:
+                    # Make new supervision
+                    new_segs.append(
+                        SupervisionSegment(
+                            id=ids[0],
+                            recording_id=recording_id,
+                            start=start,
+                            duration=round(end - start, 2),
+                            channel=channels,
+                            text=" ".join(text),
+                            speaker=speakers[0] if len(speakers) > 0 else None,
+                            gender=genders[0] if len(genders) > 0 else None,
+                            language=merge_items_with_delimiter(
+                                [lang for lang in languages if lang is not None]
+                            ),
+                            custom={
+                                k: custom[k][0] for k in custom
+                            } if custom is not None else None
+                        )
+                    )
+                    start = s.start
+                    end = start + s.duration
+                    recording_id = s.recording_id
+                    ids = [s.id]
+                    text = [s.text]
+                    languages = [s.language]
+                    speakers = [s.speaker]
+                    genders = [s.gender]
+                    if isinstance(s.channel, list):
+                        channels =[c for c in s.channel]
+                    else:
+                        channels = [s.channel]
+                    if s.custom is not None:
+                        custom = {k: [] for k in s.custom}
+                        for k in custom:
+                            custom[k].append(s.custom[k])
+                    else:
+                        custom = None
+                    continue
+
+                # Update the segments
+                end = s.start + s.duration
+                ids.append(s.id)
+                text.append(s.text)
+                languages.append(s.language)
+                genders.append(s.gender)
+                speakers.append(s.speaker)
+                if isinstance(s.channel, list):
+                    channels.extend(s.channel)
+                else:
+                    channels.append(s.channel)
+                channels = sorted(set(channels))
+                if custom is not None and s.custom is not None:
+                    for k in custom:
+                        custom[k].append(s.custom[k])
+                elif custom is None and s.custom is not None:
+                    custom = {k: [] for k in s.custom}
+                    for k in custom:
+                        custom[k].append(s.custom[k])
+                
+
+            # Make new supervision
+            if len(ids) > 0:
+                new_segs.append(
+                    SupervisionSegment(
+                        id=ids[0],
+                        recording_id=recording_id,
+                        start=start,
+                        duration=round(end - start, 2),
+                        channel=channels,
+                        text=" ".join(text),
+                        speaker=speakers[0] if len(speakers) > 0 else None,
+                        gender=genders[0] if len(genders) > 0 else None,
+                        language=merge_items_with_delimiter(
+                            [lang for lang in languages if lang is not None]
+                        ),
+                        custom={
+                            k: custom[k][0] for k in custom
+                        } if custom is not None else None
+                    )
+                )
+        return SupervisionSet.from_segments(new_segs)
 
     def split(
         self, num_splits: int, shuffle: bool = False, drop_last: bool = False

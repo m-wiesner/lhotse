@@ -189,6 +189,7 @@ class FeatureExtractor(metaclass=ABCMeta):
                 res = res[: feat_lens[len(result)]]
             result.append(res)
 
+        import pdb; pdb.set_trace()
         if input_is_torch:
             result = [torch.from_numpy(x) for x in result]
 

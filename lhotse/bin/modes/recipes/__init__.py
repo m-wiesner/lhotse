@@ -53,7 +53,9 @@ from .musan import *
 from .nsc import *
 from .peoples_speech import *
 from .primewords import *
+from .radio import *
 from .rir_noise import *
+from .sbcsae import *
 from .speechcommands import *
 from .spgispeech import *
 from .stcmds import *

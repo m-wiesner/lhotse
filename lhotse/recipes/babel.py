@@ -105,7 +105,8 @@ def prepare_single_babel_language(
         )
     corpus_dir = corpus_dir[0].parent
 
-    for split in ("dev", "eval", "training"):
+    #for split in ("dev", "eval", "training"):
+    for split in ("dev", ):
         audio_dir = corpus_dir / f"conversational/{split}/audio"
         sph_recordings = RecordingSet.from_recordings(
             Recording.from_file(p) for p in audio_dir.glob("*.sph")

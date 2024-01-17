@@ -1,6 +1,5 @@
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
-
 import numpy as np
 import torch
 
@@ -171,3 +170,95 @@ class S3PRLSSL(FeatureExtractor):
                 feats = np.stack(feats, axis=0)
 
         return feats
+
+
+@dataclass
+class K2HubertConfig:
+    sampling_rate: int = 16000
+    model: str = "hubert/exp/checkpoint-100000.pt"
+    layer: int = 6
+    frame_shift: float = 0.02
+    feature_dim: int = 768
+    device: str = "cpu"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "K2HubertConfig":
+        return K2HubertConfig(**data)
+
+
+
+@register_extractor
+class K2Hubert(FeatureExtractor):
+    name = f"hubert"
+    config_type = K2HubertConfig
+
+    def __init__(self, mdl, config: Optional[Any] = None):
+        super().__init__(config)
+        self.model = mdl.to(self.config.device)
+        self.layer = self.config.layer
+
+    @property
+    def frame_shift(self) -> Seconds:
+        return self.config.frame_shift
+
+    @property
+    def sampling_rate(self) -> int:
+        return self.config.sampling_rate
+
+    def feature_dim(self) -> int:
+        return self.config.feature_dim
+
+    def fix_off_by_one_error(self, feats: torch.Tensor, num_samples: int) -> torch.Tensor:
+        # The last frame is usually shorter than the others.
+        # We pad it with zeros to make it the same length as others.
+        num_frames, num_features = feats.size()
+        expected_num_frames = compute_num_frames_from_samples(
+            num_samples=num_samples,
+            frame_shift=self.frame_shift,
+            sampling_rate=self.sampling_rate,
+        )
+        num_frames_diff = abs(expected_num_frames - num_frames)
+        assert num_frames_diff <= 1
+        if num_frames_diff == 1:
+            pad = torch.zeros(1, num_features).to(feats.device)
+            feats = torch.cat([feats, pad], axis=0)
+        return feats
+
+    
+    def extract(
+        self,
+        samples: Union[
+            np.ndarray, torch.Tensor, Sequence[np.ndarray], Sequence[torch.Tensor]
+        ],
+        sampling_rate: int,
+    ) -> Union[np.ndarray, List[np.ndarray]]:
+        features = torch.Tensor(samples)
+        feature_lens = torch.Tensor([len(s) for s in samples])
+        output, output_lens = self.model.extract_embeddings(
+            features, feature_lens, self.layer
+        )
+        return [
+            self.fix_off_by_one_error(
+                out[:output_lens[i]], feature_lens[i]
+            ) for i, out in enumerate(output)
+        ]
+
+    def extract_batch(
+        self,
+        samples: Union[
+            np.ndarray, torch.Tensor, Sequence[np.ndarray], Sequence[torch.Tensor]
+        ],
+        sampling_rate: int,
+        lengths: Optional[Union[np.ndarray, torch.Tensor]] = None,
+    ) -> Union[np.ndarray, torch.Tensor, List[np.ndarray], List[torch.Tensor]]:
+        output, output_lens = self.model.extract_embeddings(
+            samples, lengths, self.layer
+        )
+        return [
+            self.fix_off_by_one_error(
+                out[:output_lens[i]], lengths[i]
+            ) for i, out in enumerate(output)
+        ]

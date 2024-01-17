@@ -4,6 +4,7 @@ from .dataloading import make_worker_init_fn
 from .diarization import DiarizationDataset
 from .input_strategies import AudioSamples, OnTheFlyFeatures, PrecomputedFeatures
 from .iterable_dataset import IterableDatasetWrapper
+from .geolocation import GeolocationDataset
 from .sampling import *
 from .signal_transforms import GlobalMVN, RandomizedSmoothing, SpecAugment
 from .source_separation import (
@@ -18,6 +19,7 @@ from .unsupervised import (
     DynamicUnsupervisedDataset,
     UnsupervisedDataset,
     UnsupervisedWaveformDataset,
+    HubertDataset,
 )
 from .vad import VadDataset
 from .vis import plot_batch

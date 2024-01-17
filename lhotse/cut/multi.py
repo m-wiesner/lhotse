@@ -400,14 +400,22 @@ class MultiCut(DataCut):
         if not mono_downmix:
             return mono_cuts
 
-        # Downmix the mono cuts into a single MixedCut.
+        # Downmix the mono cuts into a single MixedCut. This will create a new
+        # recording, with its own recording_id. The recording_id of corresponding
+        # supervisions also needs to change
         mixed_cut = MixedCut(
             id=self.id,
             tracks=[
                 MixTrack(cut=mono_cut, offset=0.0, snr=None) for mono_cut in mono_cuts
             ],
         )
-        return mixed_cut.to_mono()
+        new_cut = mixed_cut.to_mono()
+        supervisions = {}
+        for s in new_cut.supervisions:
+            if s.id not in supervisions:
+                supervisions[s.id] = s
+                supervisions[s.id].recording_id = new_cut.recording_id
+        return fastcopy(new_cut, supervisions=list(supervisions.values()))
 
     @staticmethod
     def from_dict(data: dict) -> "MultiCut":

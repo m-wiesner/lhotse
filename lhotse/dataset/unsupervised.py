@@ -1,6 +1,11 @@
+try:
+    from faiss import read_index 
+except ImportError:
+    print("Some trouble importing FAISS")
+    pass
 import math
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Union, List, Optional, Tuple, Callable
 
 import torch
 from torch.utils.data import IterableDataset
@@ -10,9 +15,13 @@ from lhotse.audio import suppress_audio_loading_errors, torchaudio_supports_ffmp
 from lhotse.augmentation import AugmentFn
 from lhotse.cut import CutSet
 from lhotse.dataset.collation import collate_audio, collate_features, collate_matrices
+from lhotse.dataset.input_strategies import BatchIO, PrecomputedFeatures
 from lhotse.features import FeatureExtractor
 from lhotse.features.kaldi.layers import _get_strided_batch_streaming
+from lhotse.workarounds import Hdf5MemoryIssueFix
+from lhotse.utils import compute_num_frames, ifnone
 
+import k2
 
 class UnsupervisedDataset(torch.utils.data.Dataset):
     """
@@ -216,6 +225,95 @@ class RecordingChunkIterableDataset(IterableDataset):
                     "end_time": torch.as_tensor(end_time, dtype=torch.float32),
                     "audio": remainder,
                 }
+
+
+class HubertDataset(torch.utils.data.Dataset):
+    """
+    Dataset that contains no supervision - it only provides the features extracted from recordings.
+
+    .. code-block::
+
+        {
+            'features': (B x T x F) tensor
+            'features_lens': (B, ) tensor
+        }
+    """
+
+    def __init__(
+        self, 
+        kmeans,
+        return_cuts: bool = False,
+        use_feats: bool = False,
+        cut_transforms: List[Callable[[CutSet], CutSet]] = None,
+        input_transforms: List[Callable[[torch.Tensor], torch.Tensor]] = None,
+        input_strategy: BatchIO = PrecomputedFeatures(),
+    ):
+        super().__init__()
+        self.kmeans = []
+        for km in kmeans:
+            self.kmeans.append(read_index(str(km)))
+        self.return_cuts = return_cuts
+        self.use_feats = use_feats
+        self.cut_transforms = ifnone(cut_transforms, [])
+        self.input_transforms = ifnone(input_transforms, [])
+        self.input_strategy = input_strategy
+        self.hdf5_fix = Hdf5MemoryIssueFix(reset_interval=100)
+
+    def __getitem__(self, cuts: CutSet) -> Dict[str, Union[torch.Tensor, List[str]]]:
+        self._validate(cuts)
+        self.hdf5_fix.update()
+        cuts = cuts.sort_by_duration(ascending=False)
+        for tnfm in self.cut_transforms:
+            cuts = tnfm(cuts)
+        cuts = cuts.sort_by_duration(ascending=False)
+        # Get a tensor with batched feature matrices, shape (B, T, F)
+        # Collation performs auto-padding, if necessary.
+        input_tpl = self.input_strategy(cuts)
+        if len(input_tpl) == 3:
+            # An input strategy with fault tolerant audio reading mode.
+            # "cuts" may be a subset of the original "cuts" variable,
+            # that only has cuts for which we succesfully read the audio.
+            inputs, _, cuts = input_tpl
+        else:
+            inputs, input_lens = input_tpl
+
+        supervision_intervals = self.input_strategy.supervision_intervals(cuts)
+        
+        segments = torch.stack(list(supervision_intervals.values()), dim=1)
+        for tnfm in self.input_transforms:
+            inputs = tnfm(inputs, supervision_segments=segments)
+
+        mask = torch.arange(input_lens.max()).expand(input_lens.size(0), input_lens.max()) < input_lens.unsqueeze(1)
+        vals = torch.masked_select(inputs, mask.unsqueeze(-1)).view(-1, inputs.size(-1))
+        targets = []
+        for km in self.kmeans: 
+            _, I = km.search(vals, 1) 
+            start = 0
+            targets_km = []
+            for i in range(input_lens.size(0)):
+                targets_km.append(I[start:start+input_lens[i], 0].tolist())
+                start = input_lens[i]
+            targets.append(targets_km)
+        
+        if not self.use_feats:
+            inputs, input_lens = collate_audio(cuts)
+       
+        batch = {
+            "supervisions": {
+                "targets": [
+                    k2.RaggedTensor(targets_km) for targets_km in targets
+                ],
+            },
+            "ids": [c.id for c in cuts],
+            "inputs": inputs,
+            "features_lens": input_lens,
+        }
+        batch["supervisions"].update(supervision_intervals)
+        return batch
+
+    def _validate(self, cuts: CutSet) -> None:
+        validate(cuts)
+
 
 
 class ShiftingBuffer:
