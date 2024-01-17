@@ -2,7 +2,14 @@ from .audio import (
     AudioSource,
     Recording,
     RecordingSet,
+    audio_backend,
+    available_audio_backends,
+    get_audio_duration_mismatch_tolerance,
+    get_current_audio_backend,
+    get_default_audio_backend,
+    get_ffmpeg_torchaudio_info_enabled,
     set_audio_duration_mismatch_tolerance,
+    set_current_audio_backend,
     set_ffmpeg_torchaudio_info_enabled,
 )
 from .caching import is_caching_enabled, set_caching_enabled

@@ -92,7 +92,6 @@ annotations of roles, dialog, summary etc. but we have not included them in this
 
 import itertools
 import logging
-import ssl
 import urllib
 import xml.etree.ElementTree as ET
 import zipfile
@@ -104,7 +103,8 @@ import soundfile as sf
 from tqdm.auto import tqdm
 
 from lhotse import validate_recordings_and_supervisions
-from lhotse.audio import AudioSource, Recording, RecordingSet, read_sph
+from lhotse.audio import AudioSource, Recording, RecordingSet
+from lhotse.audio.backend import read_sph
 from lhotse.qa import fix_manifests
 from lhotse.recipes.utils import normalize_text_ami
 from lhotse.supervision import AlignmentItem, SupervisionSegment, SupervisionSet
@@ -442,6 +442,8 @@ def prepare_audio_grouped(
 
 def prepare_audio_single(
     audio_paths: List[Pathlike],
+    save_to_wav: bool = False,
+    output_dir: Pathlike = None,
 ) -> RecordingSet:
     import soundfile as sf
 
@@ -456,6 +458,15 @@ def prepare_audio_single(
         else:
             audio_sf, samplerate = read_sph(audio_path)
             num_channels, num_frames = audio_sf.shape
+
+            if save_to_wav:
+                session_dir = Path(output_dir) / "wavs" / session_name
+                session_dir.mkdir(parents=True, exist_ok=True)
+                wav_path = session_dir / f"{audio_path.stem}.wav"
+                sf.write(wav_path, audio_sf.T, samplerate)
+                # Replace the sph path with the wav path
+                audio_path = wav_path
+
         recordings.append(
             Recording(
                 id=session_name,

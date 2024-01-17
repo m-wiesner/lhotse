@@ -1,11 +1,12 @@
+import logging
 import math
 import warnings
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from lhotse.audio import AudioSource, Recording, RecordingSet, audioread_info
+from lhotse.audio import AudioSource, Recording, RecordingSet, info
 from lhotse.features import Features, FeatureSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import (
@@ -42,12 +43,12 @@ def floor_duration_to_milliseconds(
 
 def get_duration(
     path: Pathlike,
-) -> float:
+) -> Optional[float]:
     """
     Read a audio file, it supports pipeline style wave path and real waveform.
 
     :param path: Path to an audio file or a Kaldi-style pipe.
-    :return: float duration of the recording, in seconds.
+    :return: float duration of the recording, in seconds or `None` in case of read error.
     """
     path = str(path)
     if path.strip().endswith("|"):
@@ -58,19 +59,18 @@ def get_duration(
             )
         import kaldi_native_io
 
-        wave = kaldi_native_io.read_wave(path)
-        assert wave.data.shape[0] == 1, f"Expect 1 channel. Given {wave.data.shape[0]}"
+        try:
+            wave = kaldi_native_io.read_wave(path)
+            assert (
+                wave.data.shape[0] == 1
+            ), f"Expect 1 channel. Given {wave.data.shape[0]}"
 
-        return floor_duration_to_milliseconds(wave.duration)
-    try:
-        # Try to parse the file using pysoundfile first.
-        import soundfile
+            return floor_duration_to_milliseconds(wave.duration)
+        except:  # exception type from kaldi_native_io ? (std::runtime_error via pybind11)
+            return None  # report a read error (recovery from C++ exception)
 
-        info = soundfile.info(path)
-    except Exception:
-        # Try to parse the file using audioread as a fallback.
-        info = audioread_info(path)
-    return floor_duration_to_milliseconds(info.duration)
+    audio_info = info(path)
+    return floor_duration_to_milliseconds(audio_info.duration)
 
 
 def load_kaldi_data_dir(
@@ -80,6 +80,7 @@ def load_kaldi_data_dir(
     map_string_to_underscores: Optional[str] = None,
     use_reco2dur: bool = True,
     num_jobs: int = 1,
+    feature_type: str = "kaldi-fbank",
 ) -> Tuple[RecordingSet, Optional[SupervisionSet], Optional[FeatureSet]]:
     """
     Load a Kaldi data directory and convert it to a Lhotse RecordingSet and
@@ -121,10 +122,35 @@ def load_kaldi_data_dir(
             "have the same length as the  wav.scp file"
         )
     else:
-        with ProcessPoolExecutor(num_jobs) as ex:
-            dur_vals = ex.map(get_duration, recordings.values())
+        # ProcessPoolExecutor hanging observed for datasets with >100k recordings.
+        # Using large chunks to be processed per child processes is advised here:
+        # https://docs.python.org/3/library/concurrent.futures.html
+        #
+        # num_chunks = num_jobs * 10, e.g. 250
+        chunksize = max(1, len(recordings) // (num_jobs * 10))
+        with ProcessPoolExecutor(max_workers=num_jobs) as ex:
+            dur_vals = list(
+                ex.map(get_duration, recordings.values(), chunksize=chunksize)
+            )
+
         durations = dict(zip(recordings.keys(), dur_vals))
 
+    # remove recordings with 'None' duration (i.e. there was a read error)
+    for recording_id, dur_value in durations.items():
+        if dur_value is None:
+            logging.warning(
+                f"[{recording_id}] Could not get duration. "
+                f"Failed to read audio from `{recordings[recording_id]}`. "
+                "Dropping the recording from manifest."
+            )
+            del recordings[recording_id]
+    # make sure not too many utterances were dropped
+    if len(recordings) < len(durations) * 0.8:
+        raise RuntimeError(
+            f'Failed to load more than 20% utterances of the dataset: "{path}"'
+        )
+
+    # assemble the new RecordingSet
     recording_set = RecordingSet.from_recordings(
         Recording(
             id=recording_id,
@@ -239,7 +265,7 @@ def load_kaldi_data_dir(
 
                     features.append(
                         Features(
-                            type="kaldi_native_io",
+                            type=feature_type,
                             num_frames=mat_shape.num_rows,
                             num_features=mat_shape.num_cols,
                             frame_shift=frame_shift,
@@ -320,7 +346,9 @@ def export_to_kaldi(
         save_kaldi_text_mapping(
             data={
                 recording.id: make_wavscp_channel_string_map(
-                    source, sampling_rate=recording.sampling_rate
+                    source,
+                    sampling_rate=recording.sampling_rate,
+                    transforms=recording.transforms,
                 )[0]
                 for recording in recordings
                 for source in recording.sources
@@ -374,7 +402,9 @@ def export_to_kaldi(
         save_kaldi_text_mapping(
             data={
                 f"{recording.id}_{channel}": make_wavscp_channel_string_map(
-                    source, sampling_rate=recording.sampling_rate
+                    source,
+                    sampling_rate=recording.sampling_rate,
+                    transforms=recording.transforms,
                 )[channel]
                 for recording in recordings
                 for source in recording.sources
@@ -512,7 +542,7 @@ def save_kaldi_text_mapping(data: Dict[str, Any], path: Path):
 
 
 def make_wavscp_channel_string_map(
-    source: AudioSource, sampling_rate: int
+    source: AudioSource, sampling_rate: int, transforms: Optional[List[Dict]] = None
 ) -> Dict[int, str]:
     if source.type == "url":
         raise ValueError("URL audio sources are not supported by Kaldi.")
@@ -523,14 +553,18 @@ def make_wavscp_channel_string_map(
             )
         return {0: f"{source.source} |"}
     elif source.type == "file":
-        if Path(source.source).suffix == ".wav" and len(source.channels) == 1:
+        if (
+            Path(source.source).suffix == ".wav"
+            and len(source.channels) == 1
+            and transforms is None
+        ):
             # Note: for single-channel waves, we don't need to invoke ffmpeg; but
             #       for multi-channel waves, Kaldi is going to complain.
             audios = dict()
             for channel in source.channels:
                 audios[channel] = source.source
             return audios
-        elif Path(source.source).suffix == ".sph":
+        if Path(source.source).suffix == ".sph":
             # we will do this specifically using the sph2pipe because
             # ffmpeg does not support shorten compression, which is sometimes
             # used in the sph files

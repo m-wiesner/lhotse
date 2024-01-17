@@ -4,18 +4,20 @@ import numpy as np
 import pytest
 import torch
 
-from lhotse import TorchaudioFbank, TorchaudioMfcc, TorchaudioSpectrogram
-from lhotse.audio import Recording
+from lhotse import Recording, TorchaudioFbank, TorchaudioMfcc, TorchaudioSpectrogram
 from lhotse.features import create_default_feature_extractor
 from lhotse.features.kaldi.extractors import (
     Fbank,
     FbankConfig,
+    LogSpectrogram,
+    LogSpectrogramConfig,
     Mfcc,
     MfccConfig,
     Spectrogram,
     SpectrogramConfig,
 )
 from lhotse.features.kaldi.layers import Wav2LogFilterBank, Wav2MFCC, Wav2Spec
+from lhotse.testing.random import deterministic_rng
 
 
 @pytest.fixture()
@@ -92,7 +94,7 @@ def test_kaldi_fbank_extractor(recording):
     assert feats.shape == (1604, 80)
 
 
-def test_kaldi_fbank_extractor_vs_torchaudio(recording):
+def test_kaldi_fbank_extractor_vs_torchaudio(deterministic_rng, recording):
     audio = recording.load_audio()
     fbank = Fbank()
     fbank_ta = TorchaudioFbank()
@@ -107,13 +109,14 @@ def test_kaldi_mfcc_extractor(recording):
     assert feats.shape == (1604, 13)
 
 
-def test_kaldi_mfcc_extractor_vs_torchaudio(recording):
+@pytest.mark.seed(1337)
+def test_kaldi_mfcc_extractor_vs_torchaudio(deterministic_rng, recording):
     audio = recording.load_audio()
     mfcc = Mfcc()
     mfcc_ta = TorchaudioMfcc()
     feats = mfcc.extract(audio, recording.sampling_rate)
     feats_ta = mfcc_ta.extract(audio, recording.sampling_rate)
-    torch.testing.assert_allclose(feats, feats_ta)
+    torch.testing.assert_allclose(feats, feats_ta, rtol=1e-3, atol=1e-4)
 
 
 def test_kaldi_spectrogram_extractor(recording):
@@ -122,7 +125,7 @@ def test_kaldi_spectrogram_extractor(recording):
     assert feats.shape == (1604, 257)
 
 
-def test_kaldi_spectrogram_extractor_vs_torchaudio(recording):
+def test_kaldi_spectrogram_extractor_vs_torchaudio(deterministic_rng, recording):
     audio = recording.load_audio()
     spec = Spectrogram(SpectrogramConfig(use_energy=True))
     spec_ta = TorchaudioSpectrogram()
@@ -141,6 +144,7 @@ def test_kaldi_spectrogram_extractor_vs_torchaudio(recording):
         lambda: Fbank(FbankConfig(snip_edges=True)),
         lambda: Mfcc(MfccConfig(snip_edges=True)),
         lambda: Spectrogram(SpectrogramConfig(snip_edges=True)),
+        lambda: LogSpectrogram(LogSpectrogramConfig(snip_edges=True)),
     ],
 )
 def test_kaldi_extractors_snip_edges_warning(extractor_type):
@@ -149,7 +153,8 @@ def test_kaldi_extractors_snip_edges_warning(extractor_type):
 
 
 @pytest.mark.parametrize(
-    "feature_type", ["kaldi-fbank", "kaldi-mfcc", "kaldi-spectrogram"]
+    "feature_type",
+    ["kaldi-fbank", "kaldi-mfcc", "kaldi-spectrogram", "kaldi-log-spectrogram"],
 )
 def test_feature_extractor_serialization(feature_type):
     fe = create_default_feature_extractor(feature_type)

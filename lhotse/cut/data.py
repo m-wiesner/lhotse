@@ -1,15 +1,16 @@
 import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
+from decimal import ROUND_DOWN
 from functools import partial
 from math import isclose
-from typing import Any, Callable, Dict, Iterable, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from intervaltree import IntervalTree
 
-from lhotse.audio import Recording
+from lhotse.audio import Recording, VideoInfo
 from lhotse.augmentation import AugmentFn
 from lhotse.cut.base import Cut
 from lhotse.features import FeatureExtractor, Features
@@ -70,7 +71,7 @@ class DataCut(Cut, metaclass=ABCMeta):
     # Store anything else the user might want.
     custom: Optional[Dict[str, Any]] = None
 
-    def __setattr__(self, key: str, value: Any):
+    def __setattr__(self, key: str, value: Any) -> None:
         """
         This magic function is called when the user tries to set an attribute.
         We use it as syntactic sugar to store custom attributes in ``self.custom``
@@ -122,6 +123,14 @@ class DataCut(Cut, metaclass=ABCMeta):
             attr_name = name[5:]
             return partial(self.load_custom, attr_name)
         raise AttributeError(f"No such attribute: {name}")
+
+    def __delattr__(self, key: str) -> None:
+        """Used to support ``del cut.custom_attr`` syntax."""
+        if key in self.__dataclass_fields__:
+            super().__delattr__(key)
+        if self.custom is None or key not in self.custom:
+            raise AttributeError(f"No such member: '{key}'")
+        del self.custom[key]
 
     def load_custom(self, name: str) -> np.ndarray:
         """
@@ -178,11 +187,28 @@ class DataCut(Cut, metaclass=ABCMeta):
     def has_recording(self) -> bool:
         return self.recording is not None
 
+    @property
+    def has_video(self) -> bool:
+        return self.has_recording and self.recording.has_video
+
+    @property
+    def video(self) -> Optional[VideoInfo]:
+        if self.has_recording:
+            v = self.recording.video
+            return v.copy_with(
+                num_frames=compute_num_samples(
+                    self.duration, v.fps, rounding=ROUND_DOWN
+                )
+            )
+        return None
+
     def has(self, field: str) -> bool:
         if field == "recording":
             return self.has_recording
         elif field == "features":
             return self.has_features
+        elif field == "video":
+            return self.has_video
         else:
             return self.custom is not None and field in self.custom
 
@@ -239,6 +265,13 @@ class DataCut(Cut, metaclass=ABCMeta):
     @rich_exception_info
     @abstractmethod
     def load_audio(self, **kwargs) -> Optional[np.ndarray]:
+        ...
+
+    @rich_exception_info
+    @abstractmethod
+    def load_video(
+        self, **kwargs
+    ) -> Optional[Tuple[torch.Tensor, Optional[torch.Tensor]]]:
         ...
 
     def move_to_memory(
@@ -913,7 +946,9 @@ class DataCut(Cut, metaclass=ABCMeta):
             supervisions=supervisions_vp,
         )
 
-    def normalize_loudness(self, target: float, affix_id: bool = False) -> "DataCut":
+    def normalize_loudness(
+        self, target: float, affix_id: bool = False, **kwargs
+    ) -> "DataCut":
         """
         Return a new ``DataCut`` that will lazily apply loudness normalization.
 
@@ -1042,6 +1077,7 @@ class DataCut(Cut, metaclass=ABCMeta):
     @abstractmethod
     def merge_supervisions(
         self,
+        merge_policy: str = "delimiter",
         custom_merge_fn: Optional[Callable[[str, Iterable[Any]], Any]] = None,
         **kwargs,
     ) -> "DataCut":

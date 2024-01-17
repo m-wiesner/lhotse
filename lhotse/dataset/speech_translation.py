@@ -1,16 +1,18 @@
+# Copyright    2023  Johns Hopkins        (authors: Amir Hussein)
+
 from typing import Callable, Dict, List, Union
 
 import torch
-from torch.utils.data.dataloader import DataLoader, default_collate
+from torch.utils.data.dataloader import default_collate
 
-from lhotse import validate
 from lhotse.cut import CutSet
 from lhotse.dataset.input_strategies import BatchIO, PrecomputedFeatures
+from lhotse.dataset.speech_recognition import validate_for_asr
 from lhotse.utils import compute_num_frames, ifnone
 from lhotse.workarounds import Hdf5MemoryIssueFix
 
 
-class K2SpeechTranslationDataset(torch.utils.data.Dataset):
+class K2Speech2TextTranslationDataset(torch.utils.data.Dataset):
     """
     The PyTorch Dataset for the speech translation task using k2 library.
 
@@ -33,7 +35,8 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
             'supervisions': [
                 {
                     'sequence_idx': Tensor[int] of shape (S,)
-                    'text': List[str] of len S
+                    'src_text': List[str] of len S
+                    'tgt_text': List[str] of len S
 
                     # For feature input strategies
                     'start_frame': Tensor[int] of shape (S,)
@@ -64,11 +67,9 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
         cut_transforms: List[Callable[[CutSet], CutSet]] = None,
         input_transforms: List[Callable[[torch.Tensor], torch.Tensor]] = None,
         input_strategy: BatchIO = PrecomputedFeatures(),
-        src: str = "ara",
-        tgt: str = "eng",
     ):
         """
-        k2 ASR IterableDataset constructor.
+        K2 Speech2TextTranslation IterableDataset constructor.
 
         :param return_cuts: When ``True``, will additionally return a "cut" field in each batch with the Cut
             objects used to create that batch.
@@ -80,8 +81,6 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
             Examples: normalization, SpecAugment, etc.
         :param input_strategy: Converts cuts into a collated batch of audio/features.
             By default, reads pre-computed features from disk.
-        :param src: The language identifier used for the source language
-        :param tgt: the language identifier used for the target language
         """
         super().__init__()
         # Initialize the fields
@@ -89,8 +88,6 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
         self.cut_transforms = ifnone(cut_transforms, [])
         self.input_transforms = ifnone(input_transforms, [])
         self.input_strategy = input_strategy
-        self.src = src
-        self.tgt = tgt
 
         # This attribute is a workaround to constantly growing HDF5 memory
         # throughout the epoch. It regularly closes open file handles to
@@ -103,7 +100,6 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
         of max_frames and max_cuts.
         """
         validate_for_asr(cuts)
-
         self.hdf5_fix.update()
 
         # Sort the cuts by duration so that the first one determines the batch time dimensions.
@@ -130,32 +126,26 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
 
         # Get a dict of tensors that encode the positional information about supervisions
         # in the batch of feature matrices. The tensors are named "sequence_idx",
-        # "start_frame/sample" and "num_frames/samples". In our cuts we have
-        # two supervisions, one for each langauge. we recreate the cuts so that
-        # only the target language supervision is stored.
-        supervision_intervals = self.input_strategy.supervision_intervals(
-            cuts.filter_supervisions(lambda s: s.language == self.tgt)
-        )
+        # "start_frame/sample" and "num_frames/samples".
+        supervision_intervals = self.input_strategy.supervision_intervals(cuts)
 
         # Apply all available transforms on the inputs, i.e. either audio or features.
         # This could be feature extraction, global MVN, SpecAugment, etc.
         segments = torch.stack(list(supervision_intervals.values()), dim=1)
         for tnfm in self.input_transforms:
             inputs = tnfm(inputs, supervision_segments=segments)
-
-        supervisions = []
-        for sequence_idx, cut in enumerate(cuts):
-            sup_dict = {}
-            for supervision in cut.supervisions:
-                if supervision.language == self.src:
-                    sup_dict['source_text'] = supervision.text
-                elif supervision.language == self.tgt:
-                    sup_dict['target_text'] = supervision.text
-            supervisions.append(sup_dict)
-        
         batch = {
             "inputs": inputs,
-            "supervisions": default_collate(supervisions),
+            "supervisions": default_collate(
+                [
+                    {
+                        "text": supervision.text,
+                        "tgt_text": supervision.custom["translated_text"],
+                    }
+                    for sequence_idx, cut in enumerate(cuts)
+                    for supervision in cut.supervisions
+                ]
+            ),
         }
         # Update the 'supervisions' field with sequence_idx and start/num frames/samples
         batch["supervisions"].update(supervision_intervals)
@@ -211,24 +201,3 @@ class K2SpeechTranslationDataset(torch.utils.data.Dataset):
             batch["supervisions"]["word_end"] = ends
 
         return batch
-
-
-def validate_for_asr(cuts: CutSet) -> None:
-    validate(cuts)
-    tol = 2e-3  # 1ms
-    for cut in cuts:
-        for supervision in cut.supervisions:
-            assert supervision.start >= -tol, (
-                f"Supervisions starting before the cut are not supported for ASR"
-                f" (sup id: {supervision.id}, cut id: {cut.id})"
-            )
-
-            # Supervision start time is relative to Cut ...
-            # https://lhotse.readthedocs.io/en/v0.10_e/cuts.html
-            #
-            # 'supervision.end' is end of supervision inside the Cut
-            assert supervision.end <= cut.duration + tol, (
-                f"Supervisions ending after the cut "
-                f"are not supported for ASR"
-                f" (sup id: {supervision.id}, cut id: {cut.id})"
-            )

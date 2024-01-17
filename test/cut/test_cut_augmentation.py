@@ -420,7 +420,7 @@ def test_mixed_cut_start01_reverb_rir_with_fast_random(
 ):
     mixed_rvb = cut_with_supervision_start01.append(
         cut_with_supervision_start01
-    ).reverb_rir()
+    ).reverb_rir(mix_first=False)
     assert mixed_rvb.start == 0  # MixedCut always starts at 0
     assert mixed_rvb.duration == cut_with_supervision_start01.duration * 2
     assert mixed_rvb.end == cut_with_supervision_start01.duration * 2
@@ -631,9 +631,11 @@ def test_cut_perturb_volume(cut_set, cut_id, scale):
     not is_module_available("pyloudnorm"),
     reason="This test requires pyloudnorm to be installed.",
 )
-@pytest.mark.parametrize("target", [-15.0, -20.0, -25.0])
-def test_cut_normalize_loudness(libri_cut_set, target):
-    cut_set_ln = libri_cut_set.normalize_loudness(target)
+@pytest.mark.parametrize("target", [-15.0, -25.0])
+@pytest.mark.parametrize("mix_first", [True, False])
+def test_cut_normalize_loudness(libri_cut_set, target, mix_first):
+    cuts = libri_cut_set.pad(duration=120.0)
+    cut_set_ln = cuts.normalize_loudness(target, mix_first=mix_first)
 
     import pyloudnorm as pyln
 

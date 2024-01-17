@@ -16,7 +16,13 @@ from lhotse import (
     validate,
 )
 from lhotse.serialization import deserialize_item
-from lhotse.testing.dummies import dummy_cut, dummy_recording
+from lhotse.testing.dummies import (
+    dummy_cut,
+    dummy_multi_cut,
+    dummy_recording,
+    dummy_supervision,
+)
+from lhotse.testing.random import deterministic_rng
 
 
 @pytest.mark.parametrize("cut", [dummy_cut(1), dummy_cut(2).pad(300)])
@@ -98,7 +104,7 @@ def test_cut_custom_nonarray_attr_serialization():
     assert restored_cut.SNR == 7.3
 
 
-def test_cut_load_temporal_array():
+def test_cut_load_temporal_array(deterministic_rng):
     """Check that we can read a TemporalArray from a cut when their durations match."""
     alignment = np.random.randint(500, size=131)
     with TemporaryDirectory() as d, NumpyFilesWriter(d) as writer:
@@ -115,7 +121,7 @@ def test_cut_load_temporal_array():
         np.testing.assert_equal(alignment, restored_alignment)
 
 
-def test_cut_load_temporal_array_truncate():
+def test_cut_load_temporal_array_truncate(deterministic_rng):
     """Check the array loaded via TemporalArray is truncated along with the cut."""
     with TemporaryDirectory() as d, NumpyFilesWriter(d) as writer:
         expected_duration = 52.4  # 131 frames x 0.4s frame shift == 52.4s
@@ -133,7 +139,7 @@ def test_cut_load_temporal_array_truncate():
 
 
 @pytest.mark.parametrize("pad_value", [-1, 0])
-def test_cut_load_temporal_array_pad(pad_value):
+def test_cut_load_temporal_array_pad(deterministic_rng, pad_value):
     """Check the array loaded via TemporalArray is padded along with the cut."""
     with TemporaryDirectory() as d, NumpyFilesWriter(d) as writer:
         cut = MonoCut(
@@ -156,7 +162,7 @@ def test_cut_load_temporal_array_pad(pad_value):
         np.testing.assert_equal(alignment_pad[131:], pad_value)
 
 
-def test_validate_cut_with_temporal_array(caplog):
+def test_validate_cut_with_temporal_array(caplog, deterministic_rng):
     # Note: "caplog" is a special variable in pytest that captures logs.
     caplog.set_level(logging.WARNING)
     with TemporaryDirectory() as d, NumpyFilesWriter(d) as writer:
@@ -180,7 +186,7 @@ def test_validate_cut_with_temporal_array(caplog):
     )
 
 
-def test_cut_load_custom_recording():
+def test_cut_load_custom_recording(deterministic_rng):
     sampling_rate = 16000
     duration = 52.4
     audio = np.random.randn(1, compute_num_samples(duration, sampling_rate)).astype(
@@ -203,7 +209,7 @@ def test_cut_load_custom_recording():
         np.testing.assert_allclose(audio, restored_audio, atol=4e-5)
 
 
-def test_cut_load_custom_recording_truncate():
+def test_cut_load_custom_recording_truncate(deterministic_rng):
     sampling_rate = 16000
     duration = 52.4
     audio = np.random.randn(1, compute_num_samples(duration, sampling_rate)).astype(
@@ -230,7 +236,7 @@ def test_cut_load_custom_recording_truncate():
         np.testing.assert_allclose(audio[:, :80000], restored_audio, atol=3e-5)
 
 
-def test_cut_load_custom_recording_pad_right():
+def test_cut_load_custom_recording_pad_right(deterministic_rng):
     sampling_rate = 16000
     duration = 52.4
     audio = np.random.randn(1, compute_num_samples(duration, sampling_rate)).astype(
@@ -266,7 +272,7 @@ def test_cut_load_custom_recording_pad_right():
         np.testing.assert_allclose(0, restored_audio[:, audio.shape[1] :], atol=4e-5)
 
 
-def test_cut_load_custom_recording_pad_left():
+def test_cut_load_custom_recording_pad_left(deterministic_rng):
     sampling_rate = 16000
     duration = 52.4
     audio = np.random.randn(1, compute_num_samples(duration, sampling_rate)).astype(
@@ -302,7 +308,7 @@ def test_cut_load_custom_recording_pad_left():
         )
 
 
-def test_cut_load_custom_recording_pad_both():
+def test_cut_load_custom_recording_pad_both(deterministic_rng):
     sampling_rate = 16000
     duration = 52.4
     audio = np.random.randn(1, compute_num_samples(duration, sampling_rate)).astype(
@@ -345,7 +351,7 @@ def test_cut_load_custom_recording_pad_both():
         )
 
 
-def test_cut_attach_tensor():
+def test_cut_attach_tensor(deterministic_rng):
     alignment = np.random.randint(500, size=131)
     expected_duration = 52.4  # 131 frames x 0.4s frame shift == 52.4s
     cut = MonoCut(id="x", start=0, duration=expected_duration, channel=0)
@@ -366,3 +372,32 @@ def test_cut_attach_tensor_temporal():
     cut = cut.attach_tensor("ivector", ivector)
     restored_ivector = cut.load_ivector()
     np.testing.assert_equal(ivector, restored_ivector)
+
+
+def test_del_attr_supervision():
+    sup = dummy_supervision(0)
+
+    with pytest.raises(AttributeError):
+        del sup.nonexistent_attribute
+
+    sup.extra_metadata = {"version": "0.1.1"}
+    assert "extra_metadata" in sup.custom
+    sup.extra_metadata  # does not raise
+    del sup.extra_metadata
+    with pytest.raises(AttributeError):
+        del sup.extra_metadata
+    assert "extra_metadata" not in sup.custom
+
+
+@pytest.mark.parametrize("cut", [dummy_cut(0), dummy_multi_cut(0)])
+def test_del_attr_mono_cut(cut):
+    with pytest.raises(AttributeError):
+        del cut.nonexistent_attribute
+
+    cut.extra_metadata = {"version": "0.1.1"}
+    assert "extra_metadata" in cut.custom
+    cut.extra_metadata  # does not raise
+    del cut.extra_metadata
+    with pytest.raises(AttributeError):
+        del cut.extra_metadata
+    assert "extra_metadata" not in cut.custom

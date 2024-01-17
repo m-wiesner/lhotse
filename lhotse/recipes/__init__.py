@@ -7,6 +7,7 @@ from .ami import download_ami, prepare_ami
 from .aspire import prepare_aspire
 from .atcosim import download_atcosim, prepare_atcosim
 from .babel import prepare_single_babel_language
+from .bengaliai_speech import prepare_bengaliai_speech
 from .broadcast_news import prepare_broadcast_news
 from .but_reverb_db import download_but_reverb_db, prepare_but_reverb_db
 from .bvcc import download_bvcc, prepare_bvcc
@@ -32,18 +33,28 @@ from .gale_arabic import prepare_gale_arabic
 from .gale_mandarin import prepare_gale_mandarin
 from .gigaspeech import prepare_gigaspeech
 from .gigast import download_gigast, prepare_gigast
+from .grid import download_grid, prepare_grid
 from .heroico import download_heroico, prepare_heroico
 from .hifitts import download_hifitts, prepare_hifitts
 from .himia import download_himia, prepare_himia
+from .icmcasr import prepare_icmcasr
 from .icsi import download_icsi, prepare_icsi
+from .iwslt22_ta import prepare_iwslt22_ta
+from .kespeech import prepare_kespeech
 from .l2_arctic import prepare_l2_arctic
 from .libricss import download_libricss, prepare_libricss
 from .librilight import prepare_librilight
 from .librimix import download_librimix, prepare_librimix
 from .librispeech import download_librispeech, prepare_librispeech
-from .libritts import download_libritts, prepare_libritts
+from .libritts import (
+    download_libritts,
+    download_librittsr,
+    prepare_libritts,
+    prepare_librittsr,
+)
 from .ljspeech import download_ljspeech, prepare_ljspeech
 from .magicdata import download_magicdata, prepare_magicdata
+from .medical import download_medical, prepare_medical
 from .mgb2 import prepare_mgb2
 from .mls import prepare_mls
 from .mobvoihotwords import download_mobvoihotwords, prepare_mobvoihotwords
@@ -62,10 +73,13 @@ from .stm_parallel import prepare_stm_parallel
 from .switchboard import prepare_switchboard
 from .tedlium import download_tedlium, prepare_tedlium
 from .thchs_30 import download_thchs_30, prepare_thchs_30
+from .this_american_life import download_this_american_life, prepare_this_american_life
 from .timit import download_timit, prepare_timit
 from .uwb_atcc import download_uwb_atcc, prepare_uwb_atcc
 from .vctk import download_vctk, prepare_vctk
 from .voxceleb import download_voxceleb1, download_voxceleb2, prepare_voxceleb
+from .voxconverse import download_voxconverse, prepare_voxconverse
+from .voxpopuli import download_voxpopuli, prepare_voxpopuli
 from .wenet_speech import prepare_wenet_speech
 from .xbmu_amdo31 import download_xbmu_amdo31, prepare_xbmu_amdo31
 from .yesno import download_yesno, prepare_yesno

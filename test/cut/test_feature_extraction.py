@@ -10,6 +10,7 @@ import torch
 
 from lhotse import (
     S3PRLSSL,
+    AudioSource,
     CutSet,
     Fbank,
     FbankConfig,
@@ -18,6 +19,7 @@ from lhotse import (
     LibrosaFbank,
     LibrosaFbankConfig,
     LilcomChunkyWriter,
+    LogSpectrogram,
     Mfcc,
     MonoCut,
     Recording,
@@ -28,7 +30,6 @@ from lhotse import (
     load_manifest,
     validate,
 )
-from lhotse.audio import AudioSource
 from lhotse.cut import MixedCut
 from lhotse.features.io import LilcomFilesWriter
 from lhotse.serialization import InvalidPathExtension
@@ -197,6 +198,7 @@ def is_python_311_or_higher() -> bool:
         Fbank,
         Mfcc,
         Spectrogram,
+        LogSpectrogram,
         TorchaudioFbank,
         TorchaudioMfcc,
         pytest.param(

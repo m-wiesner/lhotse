@@ -6,11 +6,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Union
 import numpy as np
 
 from lhotse.array import Array, TemporalArray
-from lhotse.audio import (
-    LHOTSE_AUDIO_DURATION_MISMATCH_TOLERANCE,
-    Recording,
-    RecordingSet,
-)
+from lhotse.audio import Recording, RecordingSet, get_audio_duration_mismatch_tolerance
 from lhotse.cut import Cut, CutSet, MixedCut, MonoCut, PaddingCut
 from lhotse.features import Features, FeatureSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
@@ -223,7 +219,7 @@ def validate_recording(r: Recording, read_data: bool = False) -> None:
     expected_duration = r.num_samples / r.sampling_rate
     assert r.num_channels > 0, f"Recording {r.id}: no channels available"
     assert (
-        abs(expected_duration - r.duration) <= LHOTSE_AUDIO_DURATION_MISMATCH_TOLERANCE
+        abs(expected_duration - r.duration) <= get_audio_duration_mismatch_tolerance()
     ), (
         f"Recording {r.id}: mismatched declared duration ({r.duration}) with "
         f"num_samples / sampling_rate ({expected_duration})."
@@ -403,7 +399,13 @@ def validate_cut(c: Cut, read_data: bool = False) -> None:
                 f"MonoCut {c.id}: supervision {s.id} has a mismatched recording_id "
                 f"(expected {c.recording_id}, supervision has {s.recording_id})"
             )
-            assert s.channel == c.channel, (
+            # We want to ensure that the cut channel is same as supervision channel.
+            # But one or both of them can be a list.
+            # So we check that they are subsets of each other. This is a general way
+            # of checking set equality.
+            assert is_equal_or_contains(s.channel, c.channel) and is_equal_or_contains(
+                c.channel, s.channel
+            ), (
                 f"MonoCut {c.id}: supervision {s.id} has a mismatched channel "
                 f"(expected {c.channel}, supervision has {s.channel})"
             )

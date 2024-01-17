@@ -29,6 +29,7 @@ EVAL2000_TRANSCRIPT_DIR = "LDC2002T43"
 def prepare_eval2000(
     corpus_dir: Pathlike,
     output_dir: Pathlike,
+    transcript_path: Optional[Pathlike] = None,
     absolute_paths: bool = False,
     num_jobs: int = 1,
 ) -> Dict[str, Union[RecordingSet, SupervisionSet]]:
@@ -48,7 +49,12 @@ def prepare_eval2000(
     assert (
         audio_partition_dir_path.is_dir()
     ), f"No such directory:{audio_partition_dir_path}"
-    transcript_dir_path = corpus_dir / EVAL2000_TRANSCRIPT_DIR / "reference" / "english"
+    default_transcript_path = (
+        corpus_dir / EVAL2000_TRANSCRIPT_DIR / "reference" / "english"
+    )
+    transcript_dir_path = (
+        default_transcript_path if transcript_path is None else Path(transcript_path)
+    )
     assert transcript_dir_path.is_dir(), f"No such directory:{transcript_dir_path}"
     groups = []
     for path in (audio_partition_dir_path).rglob("*.sph"):
@@ -60,15 +66,15 @@ def prepare_eval2000(
         )
         for group in groups
     )
-    segment_supervision = make_segments(transcript_dir_path)
-    supervision_set = SupervisionSet.from_segments(segment_supervision)
-    recordings, supervisions = fix_manifests(recordings, supervision_set)
+    segments = make_segments(transcript_dir_path)
+    supervisions = SupervisionSet.from_segments(segments)
+    recordings, supervisions = fix_manifests(recordings, supervisions)
     validate_recordings_and_supervisions(recordings, supervisions)
     if output_dir is not None:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         recordings.to_file(output_dir / "eval2000_recordings_all.jsonl.gz")
-        supervision_set.to_file(output_dir / "eval2000_supervisions_unnorm.jsonl.gz")
+        supervisions.to_file(output_dir / "eval2000_supervisions_unnorm.jsonl.gz")
     return {"recordings": recordings, "supervisions": supervisions}
 
 

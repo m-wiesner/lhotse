@@ -5,26 +5,29 @@ from typing import Dict, List, Optional, Type, Union
 
 import numpy as np
 import torch
-import torchaudio.backend.no_backend
 
-from lhotse import AudioSource, compute_num_frames, compute_num_samples
 from lhotse.array import Array, TemporalArray
-from lhotse.audio import Recording, RecordingSet
+from lhotse.audio import AudioSource, Recording, RecordingSet
 from lhotse.cut import CutSet, MonoCut, MultiCut
 from lhotse.features import Features, FeatureSet
 from lhotse.features.io import MemoryRawWriter
 from lhotse.manipulation import Manifest
 from lhotse.supervision import AlignmentItem, SupervisionSegment, SupervisionSet
-from lhotse.utils import fastcopy
+from lhotse.utils import (
+    compute_num_frames,
+    compute_num_samples,
+    fastcopy,
+    is_torchaudio_available,
+)
 
 
 @contextlib.contextmanager
-def as_lazy(manifest):
+def as_lazy(manifest, suffix=".jsonl.gz"):
     """
     Context manager for converting eager manifests to lazy manifests.
     Intended for testing.
     """
-    with NamedTemporaryFile(suffix=".jsonl.gz") as f:
+    with NamedTemporaryFile(suffix=suffix) as f:
         manifest.to_file(f.name)
         f.flush()
         yield type(manifest).from_jsonl_lazy(f.name)
@@ -90,12 +93,20 @@ def dummy_audio_source(
             type="command", channels=channels, source='echo "dummy waveform"'
         )
     else:
+        import soundfile
+
         # 1kHz sine wave
-        data = torch.sin(2 * np.pi * 1000 * torch.arange(num_samples)).unsqueeze(0)
+        data = torch.sin(2 * np.pi * 1000 * torch.arange(num_samples))
         if len(channels) > 1:
-            data = data.expand(len(channels), -1)
+            data = data.unsqueeze(0).expand(len(channels), -1).transpose(0, 1)
         binary_data = BytesIO()
-        torchaudio.save(binary_data, data, sample_rate=sampling_rate, format="wav")
+        soundfile.write(
+            binary_data,
+            data.numpy(),
+            sampling_rate,
+            format="wav",
+            closefd=False,
+        )
         binary_data.seek(0)
         return AudioSource(
             type="memory", channels=channels, source=binary_data.getvalue()
