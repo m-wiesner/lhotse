@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from lhotse import (
+    AudioSource,
     Fbank,
     FbankConfig,
     Features,
@@ -16,8 +17,8 @@ from lhotse import (
     SupervisionSet,
     load_manifest,
 )
-from lhotse.audio import AudioSource
 from lhotse.cut import CutSet, MixedCut, MixTrack, MonoCut, MultiCut
+from lhotse.cut.describe import CutSetStatistics
 from lhotse.serialization import load_jsonl
 from lhotse.testing.dummies import (
     DummyManifest,
@@ -28,6 +29,17 @@ from lhotse.testing.dummies import (
     remove_spaces_from_segment_text,
 )
 from lhotse.utils import is_module_available
+
+
+@pytest.fixture
+def mini_librispeeh2_cut_set():
+    recordings = RecordingSet.from_file(
+        "test/fixtures/mini_librispeech2/lhotse/recordings.jsonl.gz"
+    )
+    supervisions = SupervisionSet.from_file(
+        "test/fixtures/mini_librispeech2/lhotse/supervisions.jsonl.gz"
+    )
+    return CutSet.from_manifests(recordings=recordings, supervisions=supervisions)
 
 
 @pytest.fixture
@@ -49,6 +61,18 @@ def cut_set_with_mixed_cut(cut1, cut2):
 def test_cut_set_sort_by_duration(cut_set_with_mixed_cut, ascending, expected):
     cs = cut_set_with_mixed_cut.sort_by_duration(ascending=ascending)
     assert [c.duration for c in cs] == expected
+
+
+@pytest.mark.parametrize(
+    ["ascending", "expected"],
+    [
+        (True, ["lbi-3536-23268-0000", "lbi-6241-61943-0000", "lbi-8842-304647-0000"]),
+        (False, ["lbi-8842-304647-0000", "lbi-6241-61943-0000", "lbi-3536-23268-0000"]),
+    ],
+)
+def test_cut_set_sort_by_recording_id(mini_librispeeh2_cut_set, ascending, expected):
+    cs = mini_librispeeh2_cut_set.sort_by_recording_id(ascending)
+    assert [c.recording.id for c in cs] == expected
 
 
 def test_cut_set_iteration(cut_set_with_mixed_cut):
@@ -359,6 +383,25 @@ def test_cut_set_describe_runs(cut_set, full, capfd):
     assert err == ""
 
 
+@pytest.mark.parametrize("full", [True, False])
+def test_cut_set_stats_combine(cut_set, full, capfd):
+
+    # Describe a "large" cut set containing two parts
+    cs = cut_set.repeat(2)
+    cs.describe(full=full)
+    out, err = capfd.readouterr()
+
+    # Describe a combination of stats from two parts of that cut set
+    stats1 = CutSetStatistics(full=full).accumulate(cut_set)
+    stats2 = CutSetStatistics(full=full).accumulate(cut_set)
+    stats = stats1.combine(stats2)
+    stats.describe()
+    out2, err2 = capfd.readouterr()
+
+    assert out == out2
+    assert err == err2
+
+
 def test_cut_map_supervisions(cut_set):
     for cut in cut_set.map_supervisions(remove_spaces_from_segment_text):
         for s in cut.supervisions:
@@ -659,11 +702,26 @@ def test_cut_set_decompose_output_dir_doesnt_duplicate_recording():
         td = Path(td)
         cuts.decompose(output_dir=td)
 
-        text = load_jsonl(td / "recordings.jsonl.gz")
-        print(list(text))
-
         recs = load_manifest(td / "recordings.jsonl.gz")
         assert isinstance(recs, RecordingSet)
         # deduplicated recording
         assert len(recs) == 1
         assert recs[0].id == "dummy-recording-0000"
+
+
+def test_cut_set_from_files():
+    cs1 = DummyManifest(CutSet, begin_id=0, end_id=10)
+    cs2 = DummyManifest(CutSet, begin_id=10, end_id=20)
+    with NamedTemporaryFile(suffix=".jsonl.gz") as f1, NamedTemporaryFile(
+        suffix=".jsonl.gz"
+    ) as f2:
+        cs1.to_file(f1.name)
+        f1.flush()
+        cs2.to_file(f2.name)
+        f2.flush()
+
+        cs = CutSet.from_files([f1.name, f2.name], shuffle_iters=True, seed=0)
+        # __getitem__ with int index iterates lazy manifets
+        assert cs[0].id == "dummy-mono-cut-0000"
+        # On second iteration, we see a different order
+        assert cs[0].id == "dummy-mono-cut-0010"

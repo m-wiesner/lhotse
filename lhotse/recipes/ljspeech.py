@@ -16,7 +16,7 @@ import tarfile
 from pathlib import Path
 from typing import Dict, Optional, Union
 
-from lhotse import validate_recordings_and_supervisions
+from lhotse import fix_manifests, validate_recordings_and_supervisions
 from lhotse.audio import Recording, RecordingSet
 from lhotse.features import Fbank
 from lhotse.features.base import TorchaudioFeatureExtractor
@@ -72,7 +72,7 @@ def prepare_ljspeech(
     supervisions = []
     with open(metadata_csv_path) as f:
         for line in f:
-            recording_id, text, normalized = line.split("|")
+            recording_id, text, normalized = line.strip().split("|")
             audio_path = corpus_dir / "wavs" / f"{recording_id}.wav"
             if not audio_path.is_file():
                 logging.warning(f"No such file: {audio_path}")
@@ -95,6 +95,7 @@ def prepare_ljspeech(
     recording_set = RecordingSet.from_recordings(recordings)
     supervision_set = SupervisionSet.from_segments(supervisions)
 
+    recording_set, supervision_set = fix_manifests(recording_set, supervision_set)
     validate_recordings_and_supervisions(recording_set, supervision_set)
 
     if output_dir is not None:

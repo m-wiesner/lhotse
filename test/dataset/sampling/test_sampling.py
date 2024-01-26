@@ -1,7 +1,6 @@
 import random
 from copy import deepcopy
 from functools import partial
-from itertools import groupby
 from math import isclose
 from statistics import mean
 from tempfile import NamedTemporaryFile
@@ -10,6 +9,7 @@ import pytest
 
 from lhotse import CutSet
 from lhotse.dataset import (
+    CutConcatenate,
     DynamicBucketingSampler,
     RoundRobinSampler,
     report_padding_ratio_estimate,
@@ -19,15 +19,12 @@ from lhotse.dataset.sampling import (
     BucketingSampler,
     CutPairsSampler,
     SimpleCutSampler,
-    SingleCutSampler,
     ZipSampler,
 )
 from lhotse.dataset.sampling.base import SamplingDiagnostics, TimeConstraint
 from lhotse.dataset.sampling.dynamic import DynamicCutSampler
 from lhotse.testing.dummies import DummyManifest, as_lazy, dummy_cut
-from lhotse.utils import fastcopy
-from lhotse.utils import nullcontext as does_not_raise
-from lhotse.utils import streaming_shuffle
+from lhotse.utils import fastcopy, streaming_shuffle
 
 
 @pytest.fixture
@@ -52,10 +49,29 @@ def test_dynamic_cut_sampler_max_cuts():
     assert tot == 4
 
 
-# Tests both aliases of SimpleCutSampler
-@pytest.mark.parametrize(
-    "sampler_cls", [SimpleCutSampler, SingleCutSampler, DynamicCutSampler]
-)
+def test_dynamic_cut_sampler_quadratic_duration():
+    # 2 cuts of 2s followed by 3 cuts of 1s
+    cut_set = DummyManifest(CutSet, begin_id=0, end_id=5)
+    for i, c in enumerate(cut_set):
+        if i < 2:
+            c.duration = 2.0
+
+    # at quadratic_duration=2.0, cuts of 1s have 1.5s and cuts of 2s have 4s
+    sampler = DynamicCutSampler(cut_set, max_duration=8.0, quadratic_duration=2.0)
+
+    batches = [b for b in sampler]
+    assert len(batches) == 2
+
+    b = batches[0]
+    assert len(b) == 2
+    assert sum(c.duration for c in b) == 4.0
+
+    b = batches[1]
+    assert len(b) == 3
+    assert sum(c.duration for c in b) == 3.0
+
+
+@pytest.mark.parametrize("sampler_cls", [SimpleCutSampler, DynamicCutSampler])
 def test_single_cut_sampler_shuffling(sampler_cls):
     # The dummy cuts have a duration of 1 second each
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=100)
@@ -80,8 +96,7 @@ def test_single_cut_sampler_shuffling(sampler_cls):
     assert [c.id for c in sampled_cuts] != [c.id for c in cut_set]
 
 
-@pytest.mark.parametrize("max_duration", [None, 10.0])
-def test_single_cut_sampler_time_constraints(max_duration):
+def test_single_cut_sampler_time_constraints():
     # The dummy cuts have a duration of 1 second each
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=100)
 
@@ -91,7 +106,7 @@ def test_single_cut_sampler_time_constraints(max_duration):
         # Set an effective batch size of 10 cuts, as all have 1s duration == 100 frames
         # This way we're testing that it works okay when returning multiple batches in
         # a full epoch.
-        max_duration=max_duration,
+        max_duration=10.0,
     )
     sampler_cut_ids = []
     for batch in sampler:
@@ -306,7 +321,7 @@ def test_concat_cuts_with_duration_factor():
 
 def test_bucketing_sampler_single_cuts():
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=1000)
-    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler)
+    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler, max_cuts=10000)
     sampled_cuts = []
     for batch in sampler:
         sampled_cuts.extend(batch)
@@ -318,7 +333,7 @@ def test_bucketing_sampler_no_issue_with_first_bucket_index_being_minus_one():
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=11)
     for c in cut_set:
         c.duration = rng.randint(1, 10)
-    sampler = BucketingSampler(cut_set, num_buckets=2)
+    sampler = BucketingSampler(cut_set, num_buckets=2, max_cuts=10000)
     for batch in sampler:
         pass  # does not raise
 
@@ -330,9 +345,7 @@ def test_bucketing_sampler_single_cuts_equal_duration():
             3 + idx * 1 / 50
         )  # each cut has a different duration between [3, 23]
     sampler = BucketingSampler(
-        cut_set,
-        sampler_type=SimpleCutSampler,
-        num_buckets=10,
+        cut_set, sampler_type=SimpleCutSampler, num_buckets=10, max_cuts=10000
     )
 
     # Ensure that each consecutive bucket has less cuts than the previous one
@@ -438,7 +451,7 @@ def test_bucketing_sampler_cut_pairs_equal_duration(shuffle):
 
 def test_bucketing_sampler_order_is_deterministic_given_epoch():
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=1000)
-    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler)
+    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler, max_cuts=10000)
 
     sampler.set_epoch(42)
     # calling the sampler twice without epoch update gives identical ordering
@@ -447,7 +460,7 @@ def test_bucketing_sampler_order_is_deterministic_given_epoch():
 
 def test_bucketing_sampler_order_differs_between_epochs():
     cut_set = DummyManifest(CutSet, begin_id=0, end_id=1000)
-    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler)
+    sampler = BucketingSampler(cut_set, sampler_type=SimpleCutSampler, max_cuts=10000)
 
     last_order = [item for item in sampler]
     for epoch in range(1, 6):
@@ -778,14 +791,18 @@ def test_single_cut_sampler_drop_last(sampler_cls):
 
 
 SAMPLERS_FACTORIES_FOR_REPORT_TEST = [
-    lambda: SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
-    lambda: DynamicCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
+    lambda: SimpleCutSampler(
+        DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=10000
+    ),
+    lambda: DynamicCutSampler(
+        DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=10000
+    ),
     lambda: CutPairsSampler(
         DummyManifest(CutSet, begin_id=0, end_id=10),
         DummyManifest(CutSet, begin_id=0, end_id=10),
     ),
     lambda: BucketingSampler(
-        DummyManifest(CutSet, begin_id=0, end_id=10), num_buckets=2
+        DummyManifest(CutSet, begin_id=0, end_id=10), num_buckets=2, max_cuts=10000
     ),
     lambda: DynamicBucketingSampler(
         DummyManifest(CutSet, begin_id=0, end_id=10),
@@ -793,12 +810,12 @@ SAMPLERS_FACTORIES_FOR_REPORT_TEST = [
         num_buckets=2,
     ),
     lambda: ZipSampler(
-        SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
-        SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=20)),
+        SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=10000),
+        SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=20), max_cuts=10000),
     ),
     lambda: RoundRobinSampler(
-        SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
-        SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=20)),
+        SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=10000),
+        SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=20), max_cuts=10000),
     ),
 ]
 
@@ -936,19 +953,20 @@ def test_streaming_shuffle(datasize, bufsize):
 @pytest.mark.parametrize(
     "sampler",
     [
-        SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
+        SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=1),
         CutPairsSampler(
             DummyManifest(CutSet, begin_id=0, end_id=10),
             DummyManifest(CutSet, begin_id=0, end_id=10),
+            max_cuts=1,
         ),
-        BucketingSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
+        BucketingSampler(DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=1),
         ZipSampler(
-            SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10)),
-            SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=20)),
+            SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=10), max_cuts=1),
+            SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=20), max_cuts=1),
         ),
         RoundRobinSampler(
-            SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=5)),
-            SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=15)),
+            SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=5), max_cuts=1),
+            SimpleCutSampler(DummyManifest(CutSet, begin_id=10, end_id=15), max_cuts=1),
         ),
     ],
 )
@@ -963,7 +981,7 @@ def test_sampler_properties(sampler):
 
 
 def test_report_padding_ratio_estimate():
-    s = SingleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=1000))
+    s = SimpleCutSampler(DummyManifest(CutSet, begin_id=0, end_id=1000), max_cuts=1)
     report_padding_ratio_estimate(s)  # just test that it runs
 
 
@@ -1012,3 +1030,22 @@ def test_sampler_does_not_drop_cuts_with_multiple_ranks(world_size, sampler_fn):
             tot_cuts += len(batch)
 
     assert tot_cuts == len(cuts)
+
+
+def test_sampler_map():
+    cuts = DummyManifest(CutSet, begin_id=0, end_id=10)
+    transform = CutConcatenate(gap=0.0, duration_factor=5.0)  # will glue 5 cuts into 1
+
+    sampler = DynamicCutSampler(cuts, max_duration=5.0)
+    sampler.map(transform)
+
+    batches = [b for b in sampler]
+    assert len(batches) == 2
+
+    b = batches[0]
+    assert len(b) == 1
+    assert b[0].duration == 5.0
+
+    b = batches[1]
+    assert len(b) == 1
+    assert b[0].duration == 5.0

@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from lhotse import validate_recordings_and_supervisions
+from lhotse import fix_manifests, validate_recordings_and_supervisions
 from lhotse.audio import Recording, RecordingSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import (
@@ -92,7 +92,7 @@ PHONETIC_ALPHABET = {
     "G": "GOLF",
     "H": "HOTEL",
     "I": "INDIA",
-    "J": "JULIET",
+    "J": "JULIETT",
     "K": "KILO",
     "L": "LIMA",
     "M": "MIKE",
@@ -322,6 +322,7 @@ FIX_TYPOS = {
     "TURBOLENCE": "TURBULENCE",
     "TURUBLENCE": "TURBULENCE",
     "UNREADEBLE": "UNREADABLE",
+    "UNTILL": "UNTIL",
     "UTNIL": "UNTIL",
     "VACAT": "VACATE",
     "VECTORIN": "VECTOR IN",
@@ -333,34 +334,13 @@ FIX_TYPOS = {
 }
 
 COLLAPSE_WORDS = (
+    ("AIR SPACE", "AIRSPACE"),
     ("CLEAR FOR", "CLEARED FOR"),
     ("DESCENT TO", "DESCEND TO"),
     ("DESCENT FLIGHT", "DESCEND FLIGHT"),
     ("DESCEND RATE", "DESCENT RATE"),
     ("STAND BYE", "STANDBY"),
 )
-
-BRACKET_PADDING_PATTERN1 = re.compile(r"([\w\.])(\[|\()")
-BRACKET_PADDING_PATTERN2 = re.compile(r"(\]|\))([\w])")
-NO_ENG_PATTERN = re.compile(r"\[no_eng_\|](.*?)\[\|_no_eng]")
-CZECH_PATTERN = re.compile(r"\[czech_\|](.*?)\[\|_czech]")
-COMMENT_PATTERN = re.compile(r"\[comment_\|].*?\[\|_comment]")
-UNINTELLIGBLE_PATTERN = re.compile(r"\[unintelligible_\|](.*?)\[\|_unintelligible]")
-BACKGROUND_SPEECH_PATTERN = re.compile(
-    r"\[background_speech_\|](.*?)\[\|_background_speech]"
-)
-NOISE_PATTERN = re.compile(r"\[noise_\|](.*?)\[\|_noise]")
-SPEAKER_PATTERN = re.compile(r"\[speaker_\|](.*?)\[\|_speaker]")
-DECIMAL_NUMBER_PATTERN = re.compile(r"\.([0-9])")
-NUMBER_DECIMAL_PATTERN = re.compile(r"([0-9])\.")
-PHONETIC_INTERRUPTED_PATTERN1 = re.compile(r"([A-Z]+\+)")
-PHONETIC_INTERRUPTED_PATTERN2 = re.compile(r"(\+[A-Z]+)")
-INTERRUPTED_PATTERN1 = re.compile(r"(\w+\+)")
-INTERRUPTED_PATTERN2 = re.compile(r"(\+\w+)")
-ABBREVIATION_PATTERN = re.compile(r"\(((\w*|\s*|\+)*)\(((\w*|\s*)*)\)\)")
-SPLIT_NUMERIC_ALPHA = re.compile(r"([0-9])([A-Za-z])")
-SPLIT_ALPHA_NUMERIC = re.compile(r"([A-Za-z])([0-9])")
-WHITESPACE_PATTERN = re.compile(r"  +")
 
 
 def text_normalize(
@@ -373,42 +353,47 @@ def text_normalize(
     partial_sym: str,  # When None, will output partial words
     unknown_sym: str,
 ):
+
     assert is_module_available(
         "num2words"
     ), "Please run 'pip install num2words' for number to word normalization."
     from num2words import num2words
 
+    # regex patterns
+    BRACKET_PADDING_PATTERN1 = re.compile(r"([\w\.\+])(\[|\()")
+    BRACKET_PADDING_PATTERN2 = re.compile(r"(\]|\))([\w\+])")
+    COMMENT_PATTERN = re.compile(r"\[comment_\|].*?\[\|_comment]")
+    BACKGROUND_SPEECH_PATTERN = re.compile(
+        r"\[background_speech_\|](.*?)\[\|_background_speech]"
+    )
+    NOISE_PATTERN = re.compile(r"\[noise_\|](.*?)\[\|_noise]")
+    SPEAKER_PATTERN = re.compile(r"\[speaker_\|](.*?)\[\|_speaker]")
+    DECIMAL_NUMBER_PATTERN = re.compile(r"\.([0-9])")
+    NUMBER_DECIMAL_PATTERN = re.compile(r"([0-9])\.")
+    PHONETIC_INTERRUPTED_PATTERN1 = re.compile(r"([A-Z]+\+)")
+    PHONETIC_INTERRUPTED_PATTERN2 = re.compile(r"(\+[A-Z]+)")
+    INTERRUPTED_PATTERN1 = re.compile(r"(\w+\+)")
+    INTERRUPTED_PATTERN2 = re.compile(r"(\+\w+)")
+    ABBREVIATION_PATTERN = re.compile(r"\(((\w*|\s*|\+)*)\(((\w*|\s*)*)\)\)")
+    SPLIT_NUMERIC_ALPHA = re.compile(r"([0-9])([A-Za-z])")
+    SPLIT_ALPHA_NUMERIC = re.compile(r"([A-Za-z])([0-9])")
+    NO_ENG_PATTERN = re.compile(r"\[NO_ENG_\|](.*?)\[\|_NO_ENG]")
+    CZECH_PATTERN = re.compile(r"\[CZECH_\|](.*?)\[\|_CZECH]")
+    UNINTELLIGIBLE_PATTERN = re.compile(
+        r"\[UNINTELLIGIBLE_\|](.*?)\[\|_UNINTELLIGIBLE]"
+    )
+    WHITESPACE_PATTERN = re.compile(r"  +")
+
     text = BRACKET_PADDING_PATTERN1.sub(r"\1 \2", text)
     text = BRACKET_PADDING_PATTERN2.sub(r"\1 \2", text)
     text = text.replace("](", "] (")
 
-    for pair in [
-        ("[ehm_??]", breath_sym),
-        ("[noise]", noise_sym),
-        ("[unintelligible]", unknown_sym),
-        ("[background_speech]", noise_sym),
-        ("[speaker]", breath_sym),
-    ]:
-        text = text.replace(pair[0], pair[1])
-
     text = text.replace("°", "")
     text = text.replace("?", "")
-
-    if foreign_sym == None:
-        text = text.replace("[no_eng]", unknown_sym)
-        text = NO_ENG_PATTERN.sub(r"\1", text)
-        text = CZECH_PATTERN.sub(r"\1", text)
-    else:
-        text = text.replace("[no_eng]", foreign_sym)
-        text = NO_ENG_PATTERN.sub(foreign_sym, text)
-        text = CZECH_PATTERN.sub(foreign_sym, text)
+    text = text.replace("¨", "")
+    text = text.replace("´", "'")
 
     text = COMMENT_PATTERN.sub("", text)
-
-    if unintelligble_sym == None:
-        text = UNINTELLIGBLE_PATTERN.sub(r"\1", text)
-    else:
-        text = UNINTELLIGBLE_PATTERN.sub(unintelligble_sym, text)
 
     text = BACKGROUND_SPEECH_PATTERN.sub(r"\1", text)
     text = NOISE_PATTERN.sub(r"\1", text)
@@ -421,41 +406,65 @@ def text_normalize(
 
     text = ABBREVIATION_PATTERN.sub(r"\1", text)
 
-    if partial_sym != None:
-        text = INTERRUPTED_PATTERN1.sub(partial_sym, text)
-        text = INTERRUPTED_PATTERN2.sub(partial_sym, text)
-
-    text = text.replace("+", "")
-
     # apply this word fix before applying split numeric-alpha patterns
     text = text.replace("6raha", "praha")
 
     text = SPLIT_NUMERIC_ALPHA.sub(r"\1 \2", text)
     text = SPLIT_ALPHA_NUMERIC.sub(r"\1 \2", text)
 
+    text = strip_accents(text)
+
+    simple_replace = {
+        "[ehm_]": breath_sym,
+        "[noise]": noise_sym,
+        "[unintelligible]": unknown_sym,
+        "[background_speech]": noise_sym,
+        "[speaker]": breath_sym,
+    }
+
     result = []
     for w in text.split():
-        if w in UNKNOWN_ABBREVIATIONS:
+        if w in simple_replace:
+            result.append(simple_replace[w])
+        elif w in UNKNOWN_ABBREVIATIONS:
             result.append(unknown_sym)
         elif w in ABBREVIATIONS:
             result.append(ABBREVIATIONS[w])
         elif w in INDIVIDUALLY_PRONOUNCED:
-            result.append(" ".join([*w]))
+            result.append(" ".join([*w]).upper())
         elif w in PHONETIC_ALPHABET:
             result.append(PHONETIC_ALPHABET[w])
         elif w.isdigit():
-            result.append(num2words(w).replace("-", " ").replace(",", ""))
+            result.append(num2words(w).replace("-", " ").replace(",", "").upper())
         else:
-            result.append(w)
+            result.append(w.upper())
     text = " ".join(result)
 
-    text = text.replace("´", "'")
-    text = text.replace("¨", "")
+    # from here on, text, with the exception of inserted symbols, is all uppercase,
+    # therfore [no_eng], [czech] and [unintelligible] pattern matching must be done in uppercase.
+
+    if foreign_sym == None:
+        text = text.replace("[NO_ENG]", unknown_sym)
+        text = NO_ENG_PATTERN.sub(r"\1", text)
+        text = CZECH_PATTERN.sub(r"\1", text)
+    else:
+        text = text.replace("[NO_ENG]", foreign_sym)
+        text = NO_ENG_PATTERN.sub(foreign_sym, text)
+        text = CZECH_PATTERN.sub(foreign_sym, text)
+
+    if unintelligble_sym == None:
+        text = UNINTELLIGIBLE_PATTERN.sub(r"\1", text)
+    else:
+        text = UNINTELLIGIBLE_PATTERN.sub(unintelligble_sym, text)
+
+    if partial_sym != None:
+        text = INTERRUPTED_PATTERN1.sub(partial_sym, text)
+        text = INTERRUPTED_PATTERN2.sub(partial_sym, text)
+
+    text = text.replace("+", "")
 
     text = WHITESPACE_PATTERN.sub(" ", text)
     text = text.strip()
-    text = strip_accents(text)
-    text = text.upper()
 
     text = " ".join([FIX_TYPOS[w] if w in FIX_TYPOS else w for w in text.split()])
 
@@ -480,10 +489,10 @@ def prepare_uwb_atcc(
     silence_sym: Optional[str] = "",
     breath_sym: Optional[str] = "",
     noise_sym: Optional[str] = "",
-    foreign_sym: Optional[str] = "<UNK>",
-    partial_sym: Optional[str] = "<UNK>",
-    unintelligble_sym: Optional[str] = "<UNK>",
-    unknown_sym: Optional[str] = "<UNK>",
+    foreign_sym: Optional[str] = "<unk>",
+    partial_sym: Optional[str] = "<unk>",
+    unintelligble_sym: Optional[str] = "<unk>",
+    unknown_sym: Optional[str] = "<unk>",
 ) -> Dict[str, Union[RecordingSet, SupervisionSet]]:
     """
     Returns the manifests which consist of the Recordings and Supervisions
@@ -511,6 +520,9 @@ def prepare_uwb_atcc(
     recordings = []
     supervisions = []
 
+    # regex pattern for multiple whitespaces
+    WHITESPACE_PATTERN = re.compile(r"  +")
+
     from tqdm.auto import tqdm
 
     for t in tqdm(trs_files, desc="Preparing"):
@@ -527,7 +539,7 @@ def prepare_uwb_atcc(
         else:
             root = ET.parse(t).getroot()
 
-        audio_path = corpus_dir / root.attrib["audio_filename"].removeprefix("e2_")
+        audio_path = corpus_dir / root.attrib["audio_filename"][len("e2_") :]
         if not audio_path.is_file():
             logging.warning(f"No such file: {audio_path}")
             continue
@@ -620,6 +632,7 @@ def prepare_uwb_atcc(
     recording_set = RecordingSet.from_recordings(recordings)
     supervision_set = SupervisionSet.from_segments(supervisions)
 
+    recording_set, supervision_set = fix_manifests(recording_set, supervision_set)
     validate_recordings_and_supervisions(recording_set, supervision_set)
 
     if output_dir is not None:

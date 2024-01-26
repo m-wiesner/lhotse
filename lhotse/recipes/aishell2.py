@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 
 from lhotse import validate_recordings_and_supervisions
 from lhotse.audio import Recording, RecordingSet
+from lhotse.qa import fix_manifests
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import Pathlike
 
@@ -24,6 +25,10 @@ def text_normalize(line: str) -> str:
     line = line.replace("Ｔ", "T")
     line = line.replace("Ｍ", "M")
     line = line.replace("𫖯", "頫")
+    line = line.replace("，", "")
+    line = line.replace("?", "")
+    line = line.replace("-", " ")
+    line = line.upper()
     """
     The below code is to only remove "'" of mandarin.
     The "'" of english remains unchanged.
@@ -69,7 +74,7 @@ def text_normalize(line: str) -> str:
     IC0975W0451 明年二月底小成
     ID0114W0368 我感觉就是在不断拉抽屉
     ID0115W0198 我公司员工不存在持有和泰创投股份的情况
-    
+
     """
     new_line = []
     line = list(line)
@@ -157,6 +162,7 @@ def prepare_aishell2(
 
         recording_set = RecordingSet.from_recordings(recordings)
         supervision_set = SupervisionSet.from_segments(supervisions)
+        recording_set, supervision_set = fix_manifests(recording_set, supervision_set)
         validate_recordings_and_supervisions(recording_set, supervision_set)
 
         if output_dir is not None:

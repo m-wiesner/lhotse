@@ -61,6 +61,9 @@ class SimpleCutSampler(CutSampler):
             rank=rank,
             seed=seed,
         )
+        assert any(
+            v is not None for v in (max_duration, max_cuts)
+        ), "At least one of max_duration or max_cuts has to be set."
         self.data_source = DataSource(cuts)
         self.time_constraint = TimeConstraint(
             max_duration=max_duration,
@@ -219,14 +222,3 @@ class SimpleCutSampler(CutSampler):
                     cuts.append(next_cut)
 
         return CutSet.from_cuts(cuts)
-
-
-class SingleCutSampler(SimpleCutSampler):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        warnings.warn(
-            "SingleCutSampler was renamed to SimpleCutSampler in Lhotse v1.0 to avoid confusion "
-            "(the previous name suggested it sampled a single cut rather than a batch of cuts). "
-            "The alias 'SingleCutSampler' is deprecated and will be removed in Lhotse v1.1",
-            category=DeprecationWarning,
-        )

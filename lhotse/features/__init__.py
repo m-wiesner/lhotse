@@ -30,6 +30,8 @@ from .io import (
 from .kaldi.extractors import (
     Fbank,
     FbankConfig,
+    LogSpectrogram,
+    LogSpectrogramConfig,
     Mfcc,
     MfccConfig,
     Spectrogram,
@@ -47,3 +49,4 @@ from .mixer import FeatureMixer
 from .opensmile import OpenSmileConfig, OpenSmileExtractor
 from .spectrogram import TorchaudioSpectrogram, TorchaudioSpectrogramConfig
 from .ssl import S3PRLSSL, S3PRLSSLConfig
+from .whisper_fbank import WhisperFbank, WhisperFbankConfig

@@ -1,12 +1,13 @@
 import logging
 import warnings
 from dataclasses import dataclass
-from functools import reduce
+from functools import partial, reduce
 from itertools import groupby
 from operator import add
-from typing import Any, Callable, Iterable, List, Optional, Union
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 
 from lhotse.audio import Recording
 from lhotse.cut.data import DataCut
@@ -119,6 +120,7 @@ class MultiCut(DataCut):
         Load the audio by locating the appropriate recording in the supplied Recording.
         The audio is trimmed to the [begin, end] range specified by the MultiCut.
 
+        :param channel: optional int or list of int, the subset of channels to load (all by default).
         :return: a numpy ndarray with audio samples, with shape (C <channel>, N <samples>)
         """
         if self.has_recording:
@@ -126,6 +128,30 @@ class MultiCut(DataCut):
                 channels=self.channel if channel is None else channel,
                 offset=self.start,
                 duration=self.duration,
+            )
+        return None
+
+    @rich_exception_info
+    def load_video(
+        self,
+        channel: Optional[Union[int, List[int]]] = None,
+        with_audio: bool = True,
+    ) -> Optional[Tuple[torch.Tensor, Optional[torch.Tensor]]]:
+        """
+        Load the subset of video (and audio) from attached recording.
+        The data is trimmed to the [begin, end] range specified by the MonoCut.
+
+        :param channel: optional int or list of int, the subset of channels to load (all by default).
+        :param with_audio: bool, whether to load and return audio alongside video. True by default.
+        :return: a tuple of video tensor and optionally audio tensor (or ``None``),
+            or ``None`` if this cut has no video.
+        """
+        if self.has_video:
+            return self.recording.load_video(
+                channels=self.channel if channel is None else channel,
+                offset=self.start,
+                duration=self.duration,
+                with_audio=with_audio,
             )
         return None
 
@@ -211,6 +237,7 @@ class MultiCut(DataCut):
 
     def merge_supervisions(
         self,
+        merge_policy: str = "delimiter",
         merge_channels: bool = True,
         custom_merge_fn: Optional[Callable[[str, Iterable[Any]], Any]] = None,
     ) -> "MultiCut":
@@ -222,12 +249,13 @@ class MultiCut(DataCut):
         ``channel`` attribute will not change in this case.
 
         The new start is the start of the earliest superivion, and the new duration
-        is a minimum spanning duration for all the supervisions.
+        is a minimum spanning duration for all the supervisions. The text fields of
+        all segments are concatenated with a whitespace.
 
-        The text fields are concatenated with a whitespace, and all other string fields
-        (including IDs) are prefixed with "cat#" and concatenated with a hash symbol "#".
-        This is also applied to ``custom`` fields. Fields with a ``None`` value are omitted.
-
+        :param merge_policy: one of "keep_first" or "delimiter". If "keep_first", we
+            keep only the first segment's field value, otherwise all string fields
+            (including IDs) are prefixed with "cat#" and concatenated with a hash symbol "#".
+            This is also applied to ``custom`` fields. Fields with a ``None`` value are omitted.
         :param merge_channels: If true, we will merge all supervisions into a single segment.
             If false, we will merge supervisions per channel group. Default: True.
         :param custom_merge_fn: a function that will be called to merge custom fields values.
@@ -236,13 +264,20 @@ class MultiCut(DataCut):
             It will be called roughly like:
             ``custom_merge_fn(custom_key, [s.custom[custom_key] for s in sups])``
         """
+        merge_func_ = partial(
+            merge_items_with_delimiter,
+            delimiter="#",
+            return_first=(merge_policy == "keep_first"),
+        )
+
         # "m" stands for merged in variable names below
+
         if custom_merge_fn is not None:
             # Merge custom fields with the user-provided function.
             merge_custom = custom_merge_fn
         else:
             # Merge the string representations of custom fields.
-            merge_custom = lambda k, vs: merge_items_with_delimiter(map(str, vs))
+            merge_custom = lambda k, vs: merge_func_(map(str, vs))
 
         sups = sorted(self.supervisions, key=lambda s: s.start)
         if len(sups) <= 1:
@@ -293,21 +328,15 @@ class MultiCut(DataCut):
 
             msups.append(
                 SupervisionSegment(
-                    id=merge_items_with_delimiter(s.id for s in csups),
+                    id=merge_func_(s.id for s in csups),
                     recording_id=csups[0].recording_id,
                     start=mstart,
                     duration=mduration,
                     channel=list(channel),
                     text=" ".join(s.text for s in csups if s.text),
-                    speaker=merge_items_with_delimiter(
-                        s.speaker for s in csups if s.speaker
-                    ),
-                    language=merge_items_with_delimiter(
-                        s.language for s in csups if s.language
-                    ),
-                    gender=merge_items_with_delimiter(
-                        s.gender for s in csups if s.gender
-                    ),
+                    speaker=merge_func_(s.speaker for s in csups if s.speaker),
+                    language=merge_func_(s.language for s in csups if s.language),
+                    gender=merge_func_(s.gender for s in csups if s.gender),
                     custom={
                         k: merge_custom(
                             k,

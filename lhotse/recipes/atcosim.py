@@ -18,6 +18,7 @@ from tqdm.auto import tqdm
 
 from lhotse import validate_recordings_and_supervisions
 from lhotse.audio import Recording, RecordingSet
+from lhotse.qa import fix_manifests
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import (
     Pathlike,
@@ -96,6 +97,7 @@ FOREIGN_PATTERN = re.compile(r"<FL>\s*</FL>")
 OFF_TALK_PATTERN = re.compile(r"<OT>(.*?)</OT>")
 INTERRUPTED_PATTERN1 = re.compile(r"=(\w+)")
 INTERRUPTED_PATTERN2 = re.compile(r"(\w+)=")
+WHITESPACE_PATTERN = re.compile(r"  +")
 
 
 def text_normalize(
@@ -106,7 +108,19 @@ def text_normalize(
     partial_sym: str,  #  When None, will output partial words
     unknown_sym: str,
 ):
+
     text = OFF_TALK_PATTERN.sub(r"\1", text)
+
+    result = []
+    for w in text.split():
+        if w[0] == "@" or w[0] == "~":
+            result.append(w[1:])
+        elif w in FIX_TYPOS:
+            result.append(FIX_TYPOS[w])
+        else:
+            result.append(w)
+    text = " ".join(result).upper()
+
     text = text.replace("[EMPTY]", silence_sym)
     text = text.replace("[HNOISE]", breath_sym)
     text = FOREIGN_PATTERN.sub(foreign_sym, text)
@@ -120,17 +134,11 @@ def text_normalize(
     for unk in ("[FRAGMENT]", "[NONSENSE]", "[UNKNOWN]"):
         text = text.replace(unk, unknown_sym)
 
-    result = []
-    for w in text.split():
-        if w[0] == "@" or w[0] == "~":
-            result.append(w[1:])
-        elif w in FIX_TYPOS:
-            result.append(FIX_TYPOS[w])
-        else:
-            result.append(w)
-    text = " ".join(result)
+    text = text.replace("AIR SPACE", "AIRSPACE")
 
-    text = text.upper()
+    text = WHITESPACE_PATTERN.sub(" ", text)
+    text = text.strip()
+
     return text
 
 
@@ -152,9 +160,9 @@ def prepare_atcosim(
     output_dir: Optional[Pathlike] = None,
     silence_sym: Optional[str] = "",
     breath_sym: Optional[str] = "",
-    foreign_sym: Optional[str] = "<UNK>",
-    partial_sym: Optional[str] = "<UNK>",
-    unknown_sym: Optional[str] = "<UNK>",
+    foreign_sym: Optional[str] = "<unk>",
+    partial_sym: Optional[str] = "<unk>",
+    unknown_sym: Optional[str] = "<unk>",
 ) -> Dict[str, Union[RecordingSet, SupervisionSet]]:
     """
     Returns the manifests which consist of the Recordings and Supervisions
@@ -238,4 +246,9 @@ def prepare_atcosim(
 
     recordings = RecordingSet.from_jsonl_lazy(recs_writer.path)
     supervisions = SupervisionSet.from_jsonl_lazy(sups_writer.path)
+
+    logging.warning(
+        "Manifests are lazily materialized. You may want to call `lhotse.qa.fix_manifests()`"
+        " to ensure that all supervisions fall within the corresponding recordings."
+    )
     return recordings, supervisions

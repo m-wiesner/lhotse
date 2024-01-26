@@ -5,6 +5,12 @@ from pathlib import Path
 import pytest
 
 import lhotse
+import lhotse.audio.recording
+import lhotse.audio.recording_set
+import lhotse.audio.source
+import lhotse.audio.utils
+from lhotse import Recording, RecordingSet, SupervisionSegment, SupervisionSet
+from lhotse.audio import get_audio_duration_mismatch_tolerance
 
 pytest.importorskip(
     "kaldi_native_io", reason="Kaldi tests require kaldi_native_io to be installed."
@@ -18,15 +24,15 @@ MINILIB2_PATH = FIXTURE_PATH / "mini_librispeech2"
 
 @pytest.fixture
 def multi_file_recording():
-    recording = lhotse.RecordingSet.from_recordings(
+    recording = lhotse.audio.recording_set.RecordingSet.from_recordings(
         [
-            lhotse.Recording(
+            lhotse.audio.recording.Recording(
                 id="lbi-1272-135031-0000",
                 sources=[
-                    lhotse.AudioSource(
+                    lhotse.audio.source.AudioSource(
                         type="file", channels=[0], source="nonexistent-c1.wav"
                     ),
-                    lhotse.AudioSource(
+                    lhotse.audio.source.AudioSource(
                         type="file", channels=[1], source="nonexistent-c2.wav"
                     ),
                 ],
@@ -69,12 +75,12 @@ def multi_file_recording():
 
 @pytest.fixture
 def multi_channel_recording():
-    recording = lhotse.RecordingSet.from_recordings(
+    recording = lhotse.audio.recording_set.RecordingSet.from_recordings(
         [
-            lhotse.Recording(
+            lhotse.audio.recording.Recording(
                 id="lbi-1272-135031-0000",
                 sources=[
-                    lhotse.AudioSource(
+                    lhotse.audio.source.AudioSource(
                         type="file", channels=[0, 1], source="nonexistent.wav"
                     ),
                 ],
@@ -156,6 +162,32 @@ def test_multi_channel_recording(
         assert segments == multi_channel_kaldi_dir["segments"]
 
 
+def test_resample_recording(tmp_path, multi_channel_recording, multi_channel_kaldi_dir):
+    with working_directory(tmp_path):
+        recording = Recording.from_file(
+            recording_id="mono_c0",
+            path=os.path.join(os.path.dirname(__file__), "fixtures", "mono_c0.wav"),
+        ).resample(16000)
+        segment = SupervisionSegment(
+            id="Segment-c0",
+            recording_id=recording.id,
+            start=0,
+            duration=recording.duration,
+            channel=0,
+            text="SIL",
+        )
+        lhotse.kaldi.export_to_kaldi(
+            RecordingSet.from_recordings([recording]),
+            SupervisionSet.from_segments([segment]),
+            output_dir=".",
+            map_underscores_to=None,
+            prefix_spk_id=False,
+        )
+
+        wavs = open_and_load("wav.scp")
+        assert "16000" in wavs["mono_c0"]
+
+
 @contextlib.contextmanager
 def working_directory(path):
     """Changes working directory and returns to previous on exit."""
@@ -185,7 +217,9 @@ def test_kaldi_import(replace):
         lhotse_dir += "-" + replace
 
     with working_directory(fixture_path / lhotse_dir):
-        recording_set = lhotse.RecordingSet.from_jsonl("recordings.jsonl.gz")
+        recording_set = lhotse.audio.recording_set.RecordingSet.from_jsonl(
+            "recordings.jsonl.gz"
+        )
         supervision_set = lhotse.SupervisionSet.from_jsonl("supervisions.jsonl.gz")
 
     assert list(out[0]) == list(recording_set)
@@ -204,7 +238,9 @@ def test_kaldi_import_with_feats_scp():
 
     lhotse_dir = "lhotse"
     with working_directory(fixture_path / lhotse_dir):
-        recording_set = lhotse.RecordingSet.from_jsonl("recordings.jsonl.gz")
+        recording_set = lhotse.audio.recording_set.RecordingSet.from_jsonl(
+            "recordings.jsonl.gz"
+        )
         supervision_set = lhotse.SupervisionSet.from_jsonl("supervisions.jsonl.gz")
         feature_set = lhotse.FeatureSet.from_jsonl("features.jsonl.gz")
 
@@ -218,48 +254,54 @@ def open_and_load(path):
 
 
 def test_fail_on_unknown_source_type(tmp_path):
-    source = lhotse.AudioSource(
+    source = lhotse.audio.source.AudioSource(
         type="unknown", channels=[0], source="http://example.com/"
     )
     with pytest.raises(ValueError):
-        lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+        lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
 
 
 def test_fail_on_url_source_type(tmp_path):
-    source = lhotse.AudioSource(type="url", channels=[0], source="http://example.com/")
+    source = lhotse.audio.source.AudioSource(
+        type="url", channels=[0], source="http://example.com/"
+    )
     with pytest.raises(ValueError):
-        lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+        lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
 
 
 def test_fail_on_command_multichannel_source_type(tmp_path):
-    source = lhotse.AudioSource(type="command", channels=[0, 1], source="false")
+    source = lhotse.audio.source.AudioSource(
+        type="command", channels=[0, 1], source="false"
+    )
     with pytest.raises(ValueError):
-        lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+        lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
 
 
 def test_ok_on_command_singlechannel_source_type(tmp_path):
-    source = lhotse.AudioSource(type="command", channels=[0], source="true")
-    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+    source = lhotse.audio.source.AudioSource(
+        type="command", channels=[0], source="true"
+    )
+    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
     assert list(out.keys()) == [0]
     assert out[0] == "true |"
 
 
 @pytest.mark.parametrize("channel", [0, 3])
 def test_ok_on_file_singlechannel_wav_source_type(tmp_path, channel):
-    source = lhotse.AudioSource(
+    source = lhotse.audio.source.AudioSource(
         type="file", channels=[channel], source="nonexistent.wav"
     )
-    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
     assert list(out.keys()) == [channel]
     assert out[channel] == "nonexistent.wav"
 
 
 @pytest.mark.parametrize("channel", [0, 3])
 def test_ok_on_file_singlechannel_sph_source_type(tmp_path, channel):
-    source = lhotse.AudioSource(
+    source = lhotse.audio.source.AudioSource(
         type="file", channels=[channel], source="nonexistent.sph"
     )
-    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
     assert list(out.keys()) == [channel]
     assert out[channel].startswith("sph2pipe")
     assert "nonexistent.sph" in out[channel]
@@ -268,10 +310,10 @@ def test_ok_on_file_singlechannel_sph_source_type(tmp_path, channel):
 
 @pytest.mark.parametrize("channel", [0, 3])
 def test_ok_on_file_singlechannel_mp3_source_type(tmp_path, channel):
-    source = lhotse.AudioSource(
+    source = lhotse.audio.source.AudioSource(
         type="file", channels=[channel], source="nonexistent.mp3"
     )
-    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
     assert list(out.keys()) == [channel]
     assert out[channel].startswith("ffmpeg")
     assert "nonexistent.mp3" in out[channel]
@@ -279,10 +321,10 @@ def test_ok_on_file_singlechannel_mp3_source_type(tmp_path, channel):
 
 
 def test_ok_on_file_multichannel_wav_source_type(tmp_path):
-    source = lhotse.AudioSource(
+    source = lhotse.audio.source.AudioSource(
         type="file", channels=[0, 1, 2], source="nonexistent.wav"
     )
-    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000)
+    out = lhotse.kaldi.make_wavscp_channel_string_map(source, 16000, None)
     assert list(out.keys()) == [0, 1, 2]
     for channel in out.keys():
         assert out[channel].startswith("ffmpeg")
@@ -309,14 +351,16 @@ def test_load_durations(tmp_path, load_durations):
 
     lhotse_dir = "lhotse"
     with working_directory(fixture_path / lhotse_dir):
-        recording_set = lhotse.RecordingSet.from_jsonl("recordings.jsonl.gz")
+        recording_set = lhotse.audio.recording_set.RecordingSet.from_jsonl(
+            "recordings.jsonl.gz"
+        )
         supervision_set = lhotse.SupervisionSet.from_jsonl("supervisions.jsonl.gz")
 
     if load_durations:
         for i, recording in enumerate(out[0]):
             assert recording_set[i].duration == pytest.approx(
                 recording.duration,
-                lhotse.audio.LHOTSE_AUDIO_DURATION_MISMATCH_TOLERANCE,
+                get_audio_duration_mismatch_tolerance(),
             )
     else:
         assert list(out[0]) == list(recording_set)
@@ -335,7 +379,9 @@ def test_kaldi_export(tmp_path, replace, prefix):
         lhotse_dir += "-" + replace
 
     with working_directory(fixture_path / lhotse_dir):
-        recording_set = lhotse.RecordingSet.from_jsonl("recordings.jsonl.gz")
+        recording_set = lhotse.audio.recording_set.RecordingSet.from_jsonl(
+            "recordings.jsonl.gz"
+        )
         supervision_set = lhotse.SupervisionSet.from_jsonl("supervisions.jsonl.gz")
 
     lhotse.kaldi.export_to_kaldi(

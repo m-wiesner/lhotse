@@ -92,7 +92,7 @@ from lhotse import (
     SupervisionSet,
     validate_recordings_and_supervisions,
 )
-from lhotse.qa import remove_missing_recordings_and_supervisions
+from lhotse.qa import fix_manifests
 from lhotse.utils import Pathlike, resumable_download
 
 EDINBURGH_VCTK_URL = (
@@ -104,6 +104,7 @@ CREST_VCTK_URL = "http://www.udialogue.org/download/VCTK-Corpus.tar.gz"
 def download_vctk(
     target_dir: Pathlike = ".",
     force_download: Optional[bool] = False,
+    use_edinburgh_vctk_url: Optional[bool] = False,
     url: Optional[str] = CREST_VCTK_URL,
 ) -> Path:
     """
@@ -116,6 +117,9 @@ def download_vctk(
     """
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    if use_edinburgh_vctk_url:
+        url = EDINBURGH_VCTK_URL
 
     archive_name = url.split("/")[-1]
     archive_path = target_dir / archive_name
@@ -162,7 +166,7 @@ def prepare_vctk(
     corpus_dir = Path(corpus_dir)
     assert corpus_dir.is_dir(), f"No such directory: {corpus_dir}"
 
-    speaker_meta = _parse_speaker_description(corpus_dir)
+    speaker_meta = _parse_speaker_description(corpus_dir, use_edinburgh_vctk_url)
 
     audios_dir = ""
     recordings = ""
@@ -223,9 +227,7 @@ def prepare_vctk(
 
     # note(pzelasko): There were 172 recordings without supervisions when I ran it.
     #                 I am just removing them.
-    recordings, supervisions = remove_missing_recordings_and_supervisions(
-        recordings, supervisions
-    )
+    recordings, supervisions = fix_manifests(recordings, supervisions)
     validate_recordings_and_supervisions(recordings, supervisions)
 
     if output_dir is not None:
@@ -237,7 +239,7 @@ def prepare_vctk(
     return {"recordings": recordings, "supervisions": supervisions}
 
 
-def _parse_speaker_description(corpus_dir: Pathlike):
+def _parse_speaker_description(corpus_dir: Pathlike, use_edinburgh_vctk_url: bool):
     meta = {}
     lines = [
         line.split()
@@ -248,7 +250,7 @@ def _parse_speaker_description(corpus_dir: Pathlike):
     assert set(["ID", "AGE", "GENDER", "ACCENTS", "REGION"]).issubset(set(header))
 
     for spk, age, gender, accent, *region in lines[1:]:
-        meta[f"p{spk}"] = {
+        meta[f"p{spk}" if not use_edinburgh_vctk_url else f"{spk}"] = {
             "age": int(age),
             "gender": gender,
             "accent": accent,

@@ -10,7 +10,7 @@ from typing import Dict, Optional, Union
 
 from tqdm.auto import tqdm
 
-from lhotse import validate_recordings_and_supervisions
+from lhotse import fix_manifests, validate_recordings_and_supervisions
 from lhotse.audio import Recording, RecordingSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import Pathlike
@@ -40,7 +40,7 @@ def text_normalize(line: str):
     line = line.replace("ａ", "a")
     line = line.replace("Ｉ", "I")
     line = re.sub(
-        f'#|[=]|；|，|？|。|[/]|！|[!]|[.]|[?]|：|,|"|:|@|-|、|~|《|》|[|]|、', "", line
+        f'#|[=]|；|，|？|。|[/]|！|[!]|[.]|[?]|：|,|"|:|@|-|、|~|《|》|[|]|、|\.', "", line
     )
     line = line.replace("Ｅ", "E")
     line = line.replace("Ｎ", "N")
@@ -91,7 +91,6 @@ def prepare_tal_csasr(
         )
 
         for audio_path in wav_path.rglob("**/*.wav"):
-
             idx = audio_path.stem
             speaker = idx
             if idx not in transcript_dict:
@@ -117,6 +116,8 @@ def prepare_tal_csasr(
 
         recording_set = RecordingSet.from_recordings(recordings)
         supervision_set = SupervisionSet.from_segments(supervisions)
+
+        recording_set, supervision_set = fix_manifests(recording_set, supervision_set)
         validate_recordings_and_supervisions(recording_set, supervision_set)
 
         if output_dir is not None:

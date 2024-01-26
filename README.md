@@ -9,12 +9,20 @@
 [![codecov](https://codecov.io/gh/lhotse-speech/lhotse/branch/master/graph/badge.svg)](https://codecov.io/gh/lhotse-speech/lhotse)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lhotse-speech/lhotse-speech.github.io/blob/master/notebooks/lhotse-introduction.ipynb)
+[![arXiv](https://img.shields.io/badge/arXiv-2110.12561-b31b1b.svg)](https://arxiv.org/abs/2110.12561)
 
 </div>
+
 
 # Lhotse
 
 Lhotse is a Python library aiming to make speech and audio data preparation flexible and accessible to a wider community. Alongside [k2](https://github.com/k2-fsa/k2), it is a part of the next generation [Kaldi](https://github.com/kaldi-asr/kaldi) speech processing library.
+
+## Tutorial presentations and materials
+
+- (_Interspeech 2023_) Tutorial notebook [![Interspeech 2023 Tutorial](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1obZjUuVwks3A4oFX3gXFtPOM2LtrPQfL?usp=sharing)
+- (_Interspeech 2023_) [Tutorial slides](https://livejohnshopkins-my.sharepoint.com/:p:/g/personal/mwiesne2_jh_edu/EYqRDl8cIr5BsVDxi1MOW5EBUpdqh10WFkzqixPIFM63hg?e=u3lrmL)
+- (_Interspeech 2021_) [Recorded lecture (3h)](https://www.youtube.com/watch?v=y6CJLFQlmhc&pp=ygUgaW50ZXJzcGVlY2ggMjAyMSBsaG90c2UgdHV0b3JpYWw%3D)
 
 ## About
 
@@ -90,6 +98,19 @@ For development installation, you can fork/clone the GitHub repo and install wit
 This is an editable installation (`-e` option), meaning that your changes to the source code are automatically
 reflected when importing lhotse (no re-install needed). The `[dev]` part means you're installing extra dependencies
 that are used to run tests, build documentation or launch jupyter notebooks.
+
+### Environment variables
+
+Lhotse uses several environment variables to customize it's behavior. They are as follows:
+- `LHOTSE_REQUIRE_TORCHAUDIO` - when it's set and not any of `1|True|true|yes`, we'll not check for torchaudio being installed and remove it from the requirements. It will disable many functionalities of Lhotse but the basic capabilities will remain (including reading audio with `soundfile`).
+- `LHOTSE_AUDIO_DURATION_MISMATCH_TOLERANCE` - used when we load audio from a file and receive a different number of samples than declared in `Recording.num_samples`. This is sometimes necessary because different codecs (or even different versions of the same codec) may use different padding when decoding compressed audio. Typically values up to 0.1, or even 0.3 (second) are still reasonable, and anything beyond that indicates a serious issue.
+- `LHOTSE_AUDIO_BACKEND` - may be set to any of the values returned from CLI `lhotse list-audio-backends` to override the default behavior of trial-and-error and always use a specific audio backend.
+- `LHOTSE_AUDIO_LOADING_EXCEPTION_VERBOSE` - when set to `1` we'll emit full exception stack traces when every available audio backend fails to load a given file (they might be very large).
+- `LHOTSE_DILL_ENABLED` - when it's set to `1|True|true|yes`, we will enable `dill`-based serialization of `CutSet` and `Sampler` across processes (it's disabled by default even when `dill` is installed).
+- `LHOTSE_PREPARING_RELEASE` - used internally by developers when releasing a new version of Lhotse.
+- `TORCHAUDIO_USE_BACKEND_DISPATCHER` - when set to `1` and torchaudio version is below 2.1, we'll enable the experimental ffmpeg backend of torchaudio.
+- `RANK`, `WORLD_SIZE`, `WORKER`, and `NUM_WORKERS` are internally used to inform Lhotse Shar dataloading subprocesses.
+- `READTHEDOCS` is internally used for documentation builds.
 
 ### Optional dependencies
 
