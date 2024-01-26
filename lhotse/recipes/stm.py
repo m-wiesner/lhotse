@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional, Union, NamedTuple, Tuple, List
 from tqdm import tqdm
 from lhotse import validate_recordings_and_supervisions, fix_manifests
-from lhotse.audio import Recording, RecordingSet, AudioSource, sph_info
+from lhotse.audio import Recording, RecordingSet, AudioSource
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.utils import Pathlike, Seconds, is_module_available, fastcopy
 from itertools import groupby

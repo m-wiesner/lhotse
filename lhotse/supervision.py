@@ -376,6 +376,30 @@ class SupervisionSegment:
             else None,
         )
 
+    def pad(self, pad: Seconds = 0.02) -> "SupervisionSegment":
+        """
+        Return an identical ``SupervisionSegment``, but ensure that ``self.start`` is not negative (in which case
+        it's set to 0) and ``self.end`` is at least pad seconds away from start.    
+
+        This method is useful for fixing supervisions with zero or small duration. 
+        """
+        start = self.start
+        end = self.start + self.duration
+        new_start = max(0, self.start - pad)
+        new_duration = (self.start - new_start) + self.duration + pad
+        return fastcopy(
+            self,
+            start=new_start,
+            duration=new_duration,
+            alignment={
+                type: [item.trim(end=end, start=start) for item in ali]
+                for type, ali in self.alignment.items()
+            }
+            if self.alignment
+            else None,
+        )
+
+
     def map(
         self, transform_fn: Callable[["SupervisionSegment"], "SupervisionSegment"]
     ) -> "SupervisionSegment":
@@ -817,6 +841,7 @@ class SupervisionSet(Serializable, AlgorithmMixin):
     def combine_segments(
         self,
         max_consecutive=None, max_duration=30, min_duration=2, max_gap=1.5,
+        same_speaker=True, custom_merge_fn=None
     ) -> "SupervisionSet":
         """
         Combine short segments if they match the speaker and recording_id. This
@@ -837,7 +862,8 @@ class SupervisionSet(Serializable, AlgorithmMixin):
         :param max_duration: The maximum duration of combined segments
         :param min_duration: The minimum duration of the combined segments
         :param max_gap: The maximum allowed gap (silence) between supervisions
-        
+        :param same_speaker: Only allow merges between segments of the same speaker
+         
         :return: A SupervisionSet consisting of the merged segments     
         """
         if len(self) <= 1:
@@ -846,10 +872,16 @@ class SupervisionSet(Serializable, AlgorithmMixin):
         merge_custom = lambda k, vs: merge_items_with_delimiter(map(str, vs))
 
         # First we need to sort and group superisions by the matching fields
-        groups = groupby(
-            sorted(self, key=lambda x: (x.recording_id, x.speaker, x.start)),
-            key=lambda x: (x.recording_id, x.speaker),
-        )
+        if same_speaker:
+            groups = groupby(
+                sorted(self, key=lambda x: (x.recording_id, x.speaker, x.start)),
+                key=lambda x: (x.recording_id, x.speaker),
+            )
+        else:
+            groups = groupby(
+                sorted(self, key=lambda x: (x.recording_id, x.start)),
+                key=lambda x: x.recording_id,
+            )
         new_segs = []
         for k, g in groups:
             sups = sorted(g, key=lambda x: x.start)
@@ -890,21 +922,65 @@ class SupervisionSet(Serializable, AlgorithmMixin):
                 )
                 if has_break or has_too_many_segs or would_be_too_long:
                     # Make new supervision
+                    if len(speakers) > 0:
+                        new_utt_id =  f"{recording_id}-{speakers[0]}-{round(100*start):06d}_{round(100*end):06d}"
+                    else:
+                        new_utt_id = f"{recording_id}-{round(100*start):06d}_{round(100*end):06d}"
+                    # TODO: Update custom with the list of ids used to concatenate
+                    # custom.update("concat_ids": ids)
+                    if same_speaker:
+                        new_text = " ".join(text)
+                        new_speaker = speakers[0] if len(speakers) > 0 else None
+                        new_gender = genders[0] if len(genders) > 0 else None
+                    else:
+                        new_speaker = ""
+                        new_gender = ""
+                        if len(speakers) > 0 and len(text) > 0:
+                            new_text = ""
+                            for spk, txt, gnd in zip(speakers, text, genders):
+                                if new_text == "":
+                                    curr_spk = spk
+                                    new_speaker = f"cat#{spk}"
+                                    new_gender = f"cat#{gnd}"
+                                    new_text += f"<{spk}> "
+                                elif spk != curr_spk:
+                                    curr_spk = spk
+                                    new_speaker += f"#{spk}"
+                                    new_gender += f"#{gnd}"
+                                    new_text += f"<{spk}> "
+                                new_text += txt + " " 
+                        # Sometimes speaker may not be annotated
+                        elif len(text) > 0:
+                            new_text = " ".join(text)
+                            new_speaker = merge_items_with_delimiter(
+                                [spk for spk in speakers if spk is not None]
+                            )
+                            new_gender = merge_items_with_delimiter(
+                                [gnd for gnd in genders if gnd is not None]
+                            )
+                        else:
+                            new_text = None
+                            new_speaker = merge_items_with_delimiter(
+                                [spk for spk in speakers if spk is not None]
+                            )
+                            new_gender = merge_items_with_delimiter(
+                                [gnd for gnd in genders if gnd is not None]
+                            )
                     new_segs.append(
                         SupervisionSegment(
-                            id=ids[0],
+                            id=new_utt_id,
                             recording_id=recording_id,
                             start=start,
                             duration=round(end - start, 2),
                             channel=channels,
-                            text=" ".join(text),
-                            speaker=speakers[0] if len(speakers) > 0 else None,
-                            gender=genders[0] if len(genders) > 0 else None,
+                            text=new_text,
+                            speaker=new_speaker,
+                            gender=new_gender,
                             language=merge_items_with_delimiter(
                                 [lang for lang in languages if lang is not None]
                             ),
                             custom={
-                                k: custom[k][0] for k in custom
+                                k: custom[k] for k in custom
                             } if custom is not None else None
                         )
                     )
@@ -951,9 +1027,55 @@ class SupervisionSet(Serializable, AlgorithmMixin):
 
             # Make new supervision
             if len(ids) > 0:
+                # Make new supervision
+                if len(speakers) > 0:
+                    new_utt_id =  f"{recording_id}-{speakers[0]}-{round(100*start):06d}_{round(100*end):06d}"
+                else:
+                    new_utt_id = f"{recording_id}-{round(100*start):06d}_{round(100*end):06d}"
+                # TODO: Update custom with the list of ids used to concatenate
+                # custom.update("concat_ids": ids)
+                if same_speaker:
+                    new_text = " ".join(text)
+                    new_speaker = speakers[0] if len(speakers) > 0 else None
+                    new_gender = genders[0] if len(genders) > 0 else None
+                else:
+                    if len(speakers) > 0 and len(text) > 0:
+                        new_text = ""
+                        new_speaker = ""
+                        new_gender = ""
+                        for spk, txt, gnd in zip(speakers, text, genders):
+                            if new_text == "":
+                                curr_spk = spk
+                                new_speaker = f"cat#{spk}"
+                                new_gender = f"cat#{gnd}"
+                                new_text += f"<{spk}> "
+                            elif spk != curr_spk:
+                                curr_spk = spk
+                                new_speaker += f"#{spk}"
+                                new_gender += f"#{gnd}"
+                                new_text += f"<{spk}> "
+                            new_text += txt 
+                    # Sometimes speaker may not be annotated
+                    elif len(text) > 0:
+                        new_text = " ".join(text)
+                        new_speaker = merge_items_with_delimiter(
+                            [spk for spk in speakers if spk is not None]
+                        )
+                        new_gender = merge_items_with_delimiter(
+                            [gnd for gnd in genders if gnd is not None]
+                        )
+                    else:
+                        new_text = None
+                        new_speaker = merge_items_with_delimiter(
+                            [spk for spk in speakers if spk is not None]
+                        )
+                        new_gender = merge_items_with_delimiter(
+                            [gnd for gnd in genders if gnd is not None]
+                        )
+
                 new_segs.append(
                     SupervisionSegment(
-                        id=ids[0],
+                        id=new_utt_id,
                         recording_id=recording_id,
                         start=start,
                         duration=round(end - start, 2),
@@ -965,12 +1087,12 @@ class SupervisionSet(Serializable, AlgorithmMixin):
                             [lang for lang in languages if lang is not None]
                         ),
                         custom={
-                            k: custom[k][0] for k in custom
+                            k: custom[k] for k in custom
                         } if custom is not None else None
                     )
                 )
         return SupervisionSet.from_segments(new_segs)
-
+ 
     def split(
         self, num_splits: int, shuffle: bool = False, drop_last: bool = False
     ) -> List["SupervisionSet"]:
